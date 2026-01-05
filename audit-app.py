@@ -6,10 +6,10 @@ from streamlit_tree_select import tree_select
 
 from audit_reformat import handle_audit_reformat
 
-#This script is intended to be an end-to-end audit powered by LLMs
-#It will start with uploading the audit output from Qualtrics,
+#This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
+#It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
 #then will present the user an interface to allow them to select what part of the model they want audited,
-#then peform the audit using an LLM and return the completed audit
+#then peform the audit by sending sentences batched by category for rebiew by an LLM and return the completed audit
 # along with accuracy, summary of findings, and suggestions for improvement per category
 
 # Configure Streamlit page
@@ -139,27 +139,39 @@ def main():
         )
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
+        default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules. 
+The following sentences come from AARP members and users.
+The sentences have been tagged with the topic '{category}'.
+If a description for this topic exists, it follows here: '{description}'.
+Sentences can be tagged with multiple topics.
+For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
+Sentences do not need to mention AARP to be considered relevant to the topic.
+
+Sentences:
+{sentences_text}
+
+Respond in the strict format:
+ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
+
+        audit_prompt = st.text_area(
+            label="Set audit prompt.", value=default_audit_prompt, 
+            max_chars=2500,
+            placeholder="Tell the LLM what to do...",
+            help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's optional description"
+            )
+
 if __name__ == "__main__":
     main()
 
-#allow upload of raw audit file
 
-#allow upload of model XML file to provide descriptions for LLM
+#TODO: pull together extra category info to send do the LLM, e.g. full category tree, category description
 
-#allow user to select which branches they want the audit to apply to
+#TODO: send the sentences to the LLM to judge and return judgments
 
-#allow user to specify audit prompt
+#TODO: Also have the LLM summarize the main issues by category and suggest rules improvements
 
-#reformat the audit for analysis e.g. to unmerge cells
+#TODO: assemble audited sentences back into a spreadsheet
 
-#pull together extra category info to send do the LLM, e.g. full category tree, category description
+#TODO: set up the spreadsheet to report category accuracy
 
-#send the sentences to the LLM to judge and return judgments
-
-#Also have the LLM summarize the main issues by category and suggest rules improvements
-
-#assemble audited sentences back into a spreadsheet
-
-#set up the spreadsheet to report category accuracy
-
-#output spreadsheet
+#TODO: output spreadsheet
