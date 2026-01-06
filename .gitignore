@@ -182,3 +182,4 @@ cython_debug/
 
 # Misc
 .DS_Store
+.streamlit/secrets.toml
