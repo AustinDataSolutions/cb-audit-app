@@ -181,4 +181,4 @@ cython_debug/
 .cursorindexingignore
 
 # Misc
-*.DS_Store
+.DS_Store
