@@ -1,10 +1,9 @@
 import streamlit as st
-import os
 import xml.etree.ElementTree as ET
-import pandas as pd
 from streamlit_tree_select import tree_select
 
 from audit_reformat import handle_audit_reformat
+from audit import run_audit
 
 #This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
 #It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
@@ -33,6 +32,8 @@ def _parse_model_xml(xml_bytes):
 
     model_name = model_element.get("name") or model_element.findtext("name")
     nodes_by_id = {}
+    root_node = tree_element.find("node")
+    root_name = _get_node_field(root_node, "name") if root_node is not None else None
 
     def build_node(node_element, parent_path_parts):
         node_id = _get_node_field(node_element, "id")
@@ -41,8 +42,10 @@ def _parse_model_xml(xml_bytes):
         node_order_number = _get_node_field(node_element, "order-number")
         node_smart_other = _get_node_field(node_element, "smart-other")
 
-        current_path_parts = parent_path_parts + ([node_id] if node_id else [])
-        node_path = "/".join([part for part in current_path_parts if part])
+        current_path_parts = parent_path_parts + ([node_name] if node_name else [])
+        if root_name and current_path_parts and current_path_parts[0] == root_name:
+            current_path_parts = current_path_parts[1:]
+        node_path = "-->".join([part for part in current_path_parts if part])
 
         node_record = {
             "id": node_id,
@@ -58,7 +61,7 @@ def _parse_model_xml(xml_bytes):
 
         tree_node = {
             "label": node_name or node_id or "Unnamed node",
-            "value": node_id or node_path or node_name or "unknown-node",
+            "value": node_path or node_name or node_id or "unknown-node",
         }
 
         child_tree_nodes = []
@@ -89,7 +92,7 @@ def _parse_model_xml(xml_bytes):
 def main():
     # st.cache_data.clear()
     st.title("Enhanced Audit Script")
-    st.write("Run an audit using an LLM to determine accuracy.")
+    st.write("Run an automated audit on a Qualtrics topic model using an LLM to determine accuracy.")
 
     uploaded_audit = st.file_uploader(
         "Upload raw audit file (.xlsx)",
@@ -103,6 +106,7 @@ def main():
         with st.spinner("Reformatting audit..."):
             output = handle_audit_reformat(uploaded_audit)
             st.success("Reformat complete.")
+            st.session_state["reformatted_audit_bytes"] = output.getvalue()
             st.download_button(
                 label="Download reformatted audit",
                 data=output.getvalue(),
@@ -110,10 +114,29 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
+    reformatted_audit = st.file_uploader(
+        "Upload reformatted audit file (.xlsx)",
+        type=["xlsx"],
+    )
+
     model_tree = st.file_uploader(
         "Upload model tree XML to select particular topics to audit, and provide LLM with category descriptions.",
         type=["xml"],
     )
+
+    default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules. 
+The following sentences come from AARP members and users.
+The sentences have been tagged with the topic '{category}'.
+If a description for this topic exists, it follows here: '{description}'.
+Sentences can be tagged with multiple topics.
+For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
+Sentences do not need to mention AARP to be considered relevant to the topic.
+
+Sentences:
+{sentences_text}
+
+Respond in the strict format:
+ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
 
     if model_tree:
         if st.session_state.get("model_source_name") != model_tree.name:
@@ -124,7 +147,9 @@ def main():
                 return
             st.session_state["model_data"] = model_data
             st.session_state["model_source_name"] = model_tree.name
-            st.session_state["topics_to_audit"] = list(model_data["nodes"].keys())
+            st.session_state["topics_to_audit"] = [
+                node["path"] for node in model_data["nodes"].values() if node.get("path")
+            ]
 
         model_data = st.session_state.get("model_data")
         if not model_data:
@@ -139,26 +164,97 @@ def main():
         )
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
-        default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules. 
-The following sentences come from AARP members and users.
-The sentences have been tagged with the topic '{category}'.
-If a description for this topic exists, it follows here: '{description}'.
-Sentences can be tagged with multiple topics.
-For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
-Sentences do not need to mention AARP to be considered relevant to the topic.
+    audit_prompt = st.text_area(
+        label="Set audit prompt.",
+        value=default_audit_prompt,
+        max_chars=2500,
+        placeholder="Tell the LLM what to do...",
+        help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's optional description",
+    )
 
-Sentences:
-{sentences_text}
+    st.subheader("Audit settings")
+    llm_provider = st.selectbox(
+        "LLM provider",
+        options=["anthropic", "openai"],
+    )
 
-Respond in the strict format:
-ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
+    default_model = "claude-opus-4-5" if llm_provider == "anthropic" else "gpt-5-nano"
+    model_name = st.text_input("Model name", value=default_model)
 
-        audit_prompt = st.text_area(
-            label="Set audit prompt.", value=default_audit_prompt, 
-            max_chars=2500,
-            placeholder="Tell the LLM what to do...",
-            help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's optional description"
-            )
+    max_categories = st.number_input(
+        "Max categories to audit",
+        min_value=1,
+        value=1000,
+        step=1,
+    )
+    max_sentences = st.number_input(
+        "Max sentences per category",
+        min_value=1,
+        value=51,
+        step=1,
+    )
+    max_tokens = st.number_input(
+        "Max tokens per request",
+        min_value=1,
+        value=10000,
+        step=100,
+    )
+
+    with st.expander("API keys (optional)"):
+        anthropic_api_key = st.text_input(
+            "Anthropic API key",
+            type="password",
+            help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
+        )
+        openai_api_key = st.text_input(
+            "OpenAI API key",
+            type="password",
+            help="Uses OPENAI_API_KEY from the environment if left blank.",
+        )
+
+    if st.button("Run audit", type="primary"):
+        audit_bytes = st.session_state.get("reformatted_audit_bytes")
+        if reformatted_audit is not None:
+            audit_bytes = reformatted_audit.read()
+
+        if not audit_bytes:
+            st.error("Please provide a reformatted audit file before running the audit.")
+            return
+
+        if not model_tree and not st.session_state.get("topics_to_audit"):
+            topics_to_audit = None
+        else:
+            topics_to_audit = st.session_state.get("topics_to_audit")
+
+        try:
+            with st.spinner("Running audit..."):
+                output_bytes = run_audit(
+                    audit_excel_bytes=audit_bytes,
+                    prompt_template=audit_prompt,
+                    llm_provider=llm_provider,
+                    model_name=model_name,
+                    max_categories=int(max_categories),
+                    max_sentences_per_category=int(max_sentences),
+                    model_tree_bytes=model_tree.getvalue() if model_tree else None,
+                    topics_to_audit=topics_to_audit,
+                    anthropic_api_key=anthropic_api_key or None,
+                    openai_api_key=openai_api_key or None,
+                    max_tokens=int(max_tokens),
+                    log_fn=st.write,
+                )
+            st.session_state["audit_output_bytes"] = output_bytes
+            st.success("Audit complete.")
+        except Exception as exc:
+            st.error(f"Audit failed: {exc}")
+
+    audit_output_bytes = st.session_state.get("audit_output_bytes")
+    if audit_output_bytes:
+        st.download_button(
+            label="Download completed audit (.xlsx)",
+            data=audit_output_bytes,
+            file_name="completed_audit.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 if __name__ == "__main__":
     main()
