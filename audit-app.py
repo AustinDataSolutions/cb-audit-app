@@ -95,30 +95,34 @@ def main():
     st.write("Run an automated audit on a Qualtrics topic model using an LLM to determine accuracy.")
 
     uploaded_audit = st.file_uploader(
-        "Upload raw audit file (.xlsx)",
+        "Upload raw audit file from CX designer",
         type=["xlsx"],
     )
 
-    if st.button("Process", type="primary"):
-        if uploaded_audit is None:
-            st.error("Please upload an audit file before processing.")
-            return
-        with st.spinner("Reformatting audit..."):
-            output = handle_audit_reformat(uploaded_audit)
-            st.success("Reformat complete.")
-            st.session_state["reformatted_audit_bytes"] = output.getvalue()
-            st.download_button(
-                label="Download reformatted audit",
-                data=output.getvalue(),
-                file_name="reformatted_audit.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+    if uploaded_audit:
+        with st.expander("Reformat audit (optional)"):
+            if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
+                if uploaded_audit is None:
+                    st.error("Please upload an audit file before processing.")
+                    return
+                with st.spinner("Reformatting audit..."):
+                    output = handle_audit_reformat(uploaded_audit)
+                    st.success("Reformat complete.")
+                    st.session_state["reformatted_audit_bytes"] = output.getvalue()
+                    st.download_button(
+                        label="Download reformatted audit",
+                        data=output.getvalue(),
+                        file_name="reformatted_audit.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+        # Allow user to upload an audit file that was already reformatted
+        # if st.expander("Reformatted audit file"):
+        #     reformatted_audit = st.file_uploader(
+        #         "Upload reformatted audit file (.xlsx)",
+        #         type=["xlsx"],
+        #     )
 
-    reformatted_audit = st.file_uploader(
-        "Upload reformatted audit file (.xlsx)",
-        type=["xlsx"],
-    )
-
+    st.subheader("Model tree")
     model_tree = st.file_uploader(
         "Upload model tree XML to select particular topics to audit, and provide LLM with category descriptions.",
         type=["xml"],
