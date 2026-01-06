@@ -103,6 +103,7 @@ def main():
 
     if uploaded_audit:
         with st.expander("Reformat audit (optional)"):
+            st.write("Download a sortable version of the input file.")
             if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
                 if uploaded_audit is None:
                     st.error("Please upload an audit file before processing.")
@@ -179,49 +180,48 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's optional description",
     )
 
-    llm_provider = st.selectbox(
-        "LLM provider",
-        options=["anthropic", "openai"],
-    )
-
-    default_model = "claude-opus-4-5" if llm_provider == "anthropic" else "gpt-5-nano"
-    model_name = st.text_input("Model name", value=default_model)
-
-    max_categories = st.number_input(
-        "Max categories to audit",
-        min_value=1,
-        value=1000,
-        step=1,
-    )
-    max_sentences = st.number_input(
-        "Max sentences per category",
-        min_value=1,
-        value=51,
-        step=1,
-    )
-    max_tokens = st.number_input(
-        "Max tokens per request",
-        min_value=1,
-        value=10000,
-        step=100,
-    )
-
-    with st.expander("API keys (optional)"):
-        anthropic_api_key = st.text_input(
-            "Anthropic API key",
-            type="password",
-            help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
+    with st.expander("Advanced"):
+        llm_provider = st.selectbox(
+            "LLM provider",
+            options=["anthropic", "openai"],
         )
-        openai_api_key = st.text_input(
-            "OpenAI API key",
-            type="password",
-            help="Uses OPENAI_API_KEY from the environment if left blank.",
+
+        default_model = "claude-opus-4-5" if llm_provider == "anthropic" else "gpt-5-nano"
+        model_name = st.text_input("Model name", value=default_model)
+
+        max_categories = st.number_input(
+            "Max categories to audit",
+            min_value=1,
+            value=1000,
+            step=1,
         )
+        max_sentences = st.number_input(
+            "Max sentences per category",
+            min_value=1,
+            value=51,
+            step=1,
+        )
+        max_tokens = st.number_input(
+            "Max tokens per request",
+            min_value=1,
+            value=10000,
+            step=100,
+        )
+
+        with st.expander("API keys (optional)"):
+            anthropic_api_key = st.text_input(
+                "Anthropic API key",
+                type="password",
+                help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
+            )
+            openai_api_key = st.text_input(
+                "OpenAI API key",
+                type="password",
+                help="Uses OPENAI_API_KEY from the environment if left blank.",
+            )
 
     if st.button("Run audit", type="primary"):
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
-        if reformatted_audit is not None:
-            audit_bytes = reformatted_audit.read()
 
         if not audit_bytes:
             st.error("Please provide a reformatted audit file before running the audit.")
