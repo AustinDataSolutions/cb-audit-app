@@ -139,12 +139,13 @@ def main():
         type=["xml"],
     )
 
-    default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules. 
+    default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules.
 The following sentences come from AARP members and users.
+{model_info}
 The sentences have been tagged with the topic '{category}'.
 If a description for this topic exists, it follows here: '{description}'.
-Sentences can be tagged with multiple topics.
 For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
+Sentences can be tagged with multiple topics.
 Sentences do not need to mention AARP to be considered relevant to the topic.
 
 Sentences:
@@ -179,13 +180,21 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         )
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
-    st.subheader("Audit parameters")
+    st.subheader("Audit instructions")
+    model_info = ""
+    model_info = st.text_area(
+        "Model info (optional)", 
+        max_chars=1000, 
+        help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
+        placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform that awards points for educational and entertainment activities. Users can exchange points for tangible rewards, including gift cards."
+        )
+
     audit_prompt = st.text_area(
-        label="Prompt",
+        label="Instructions",
         value=default_audit_prompt,
         max_chars=2500,
         placeholder="Tell the LLM what to do...",
-        help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's optional description",
+        help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
     )
 
     with st.expander("Advanced"):
