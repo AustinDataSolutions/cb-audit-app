@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import xml.etree.ElementTree as ET
 from streamlit_tree_select import tree_select
@@ -88,6 +89,13 @@ def _parse_model_xml(xml_bytes):
     }
 
     return model_data
+
+def get_api_key(provider="ANTHROPIC"):
+    api_var = provider + "_API_KEY"
+    # Looks for secret in secrets.toml
+    if api_var in st.secrets:
+        return st.secrets[api_var]
+    return None
 
 def main():
     # st.cache_data.clear()
@@ -208,17 +216,32 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
             step=100,
         )
 
-        with st.expander("API keys (optional)"):
-            anthropic_api_key = st.text_input(
-                "Anthropic API key",
-                type="password",
-                help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
-            )
-            openai_api_key = st.text_input(
-                "OpenAI API key",
-                type="password",
-                help="Uses OPENAI_API_KEY from the environment if left blank.",
-            )
+        api_key = get_api_key(llm_provider.upper())
+        if not api_key:
+            st.error(f"{llm_provider} API key not found; enter key below")
+
+        # Initialize API key variables
+        anthropic_api_key = None
+        openai_api_key = None
+
+        with st.expander("API keys"):
+            if llm_provider == "anthropic":
+                anthropic_api_key = st.text_input(
+                    "Anthropic API key",
+                    type="password",
+                    help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
+                )
+            elif llm_provider == "openai":
+                openai_api_key = st.text_input(
+                    "OpenAI API key",
+                    type="password",
+                    help="Uses OPENAI_API_KEY from the environment if left blank.",
+                )
+            if st.button("Set API key"):
+                if llm_provider == "anthropic" and anthropic_api_key:
+                    api_key = anthropic_api_key
+                elif llm_provider == "openai" and openai_api_key:
+                    api_key = openai_api_key
 
     if st.button("Run audit", type="primary"):
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
@@ -234,6 +257,10 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
 
         try:
             with st.spinner("Running audit..."):
+                # Use api_key if set, otherwise use the text input values
+                final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
+                final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
+                
                 output_bytes = run_audit(
                     audit_excel_bytes=audit_bytes,
                     prompt_template=audit_prompt,
@@ -243,8 +270,8 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                     max_sentences_per_category=int(max_sentences),
                     model_tree_bytes=model_tree.getvalue() if model_tree else None,
                     topics_to_audit=topics_to_audit,
-                    anthropic_api_key=anthropic_api_key or None,
-                    openai_api_key=openai_api_key or None,
+                    anthropic_api_key=final_anthropic_key,
+                    openai_api_key=final_openai_key,
                     max_tokens=int(max_tokens),
                     log_fn=st.write,
                 )
