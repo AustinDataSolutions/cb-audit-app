@@ -196,7 +196,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
     st.subheader("Audit settings")
     model_info = ""
     model_info = st.text_area(
-        "About this model:", 
+        "About this model: (optional)", 
         max_chars=1000, 
         help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
         placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform that awards points for educational and entertainment activities. Users can exchange points for tangible rewards, including gift cards."
