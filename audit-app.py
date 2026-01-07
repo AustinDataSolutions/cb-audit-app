@@ -33,7 +33,8 @@ def _parse_model_xml(xml_bytes):
 
     model_name = model_element.get("name") or model_element.findtext("name")
     nodes_by_id = {}
-    root_node = tree_element.find("node")
+    top_nodes = list(tree_element.findall("node"))
+    root_node = top_nodes[0] if top_nodes else None
     root_name = _get_node_field(root_node, "name") if root_node is not None else None
 
     def build_node(node_element, parent_path_parts):
@@ -78,9 +79,14 @@ def _parse_model_xml(xml_bytes):
         return node_record, tree_node
 
     tree_nodes = []
-    for node in tree_element.findall("node"):
-        _, tree_node = build_node(node, [])
-        tree_nodes.append(tree_node)
+    if top_nodes:
+        if len(top_nodes) == 1:
+            _, root_tree_node = build_node(top_nodes[0], [])
+            tree_nodes = root_tree_node.get("children", [])
+        else:
+            for node in top_nodes:
+                _, tree_node = build_node(node, [])
+                tree_nodes.append(tree_node)
 
     model_data = {
         "model_name": model_name,
@@ -175,8 +181,11 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         if not model_data:
             st.error("Model data is missing. Please re-upload the XML file.")
             return
-
+        
         st.write("Select nodes to be audited:")
+        if model_data.get("model_name"):
+            st.caption(f"{model_data['model_name']}")
+
         tree_state = tree_select(
             model_data["tree_nodes"],
             checked=st.session_state.get("topics_to_audit", []),
