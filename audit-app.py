@@ -1,10 +1,31 @@
 import os
+import importlib.util
 import streamlit as st
 import xml.etree.ElementTree as ET
 from streamlit_tree_select import tree_select
+import yaml
 
 from audit_reformat import handle_audit_reformat
 from audit import run_audit
+
+
+def _load_summary_prompt(prompts_path):
+    try:
+        with open(prompts_path, "r") as f:
+            prompts = yaml.safe_load(f)
+        return prompts["audit-report-summarizer"]["rewards_msg_template"]
+    except Exception:
+        return ""
+
+
+def _load_summarizer_module():
+    module_path = os.path.join(os.path.dirname(__file__), "audit-report-summarizer.py")
+    spec = importlib.util.spec_from_file_location("audit_report_summarizer", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("Unable to load audit-report-summarizer module.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 #This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
 #It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
@@ -194,6 +215,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
     st.subheader("Audit settings")
+    prompts_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
     model_info = ""
     model_info = st.text_area(
         "About this model: (optional)", 
@@ -321,6 +343,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                     log_fn=st.write,
                 )
             st.session_state["audit_output_bytes"] = output_bytes
+            st.session_state.pop("audit_summary_bytes", None)
             st.success("Audit complete.")
         except Exception as exc:
             st.error(f"Audit failed: {exc}")
@@ -331,6 +354,65 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
             label="Download completed audit (.xlsx)",
             data=audit_output_bytes,
             file_name="completed_audit.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    st.subheader("Generate Audit Summary")
+    st.write("Generate a summary of the audit findings by having an LLM review the notes of all sentences found to be incorrectly categorized.")
+    summary_prompt_default = _load_summary_prompt(prompts_path)
+    summary_prompt = st.text_area(
+        label="Instructions:",
+        value=summary_prompt_default,
+        max_chars=3000,
+        placeholder="Tell the LLM how to summarize audit findings...",
+        help="Sentences are batched by category.",
+        key="summary_prompt",
+    )
+
+    summary_missing_reasons = []
+    if not audit_output_bytes:
+        summary_missing_reasons.append("Run the audit first")
+    if llm_provider == "anthropic":
+        if not (api_key or anthropic_api_key):
+            summary_missing_reasons.append("Provide an Anthropic API key")
+    elif llm_provider == "openai":
+        if not (api_key or openai_api_key):
+            summary_missing_reasons.append("Provide an OpenAI API key")
+
+    can_run_summary = not summary_missing_reasons
+    summary_help = (
+        None
+        if can_run_summary
+        else "; ".join(summary_missing_reasons)
+    )
+
+    if st.button("Run summary", type="primary", disabled=not can_run_summary, help=summary_help):
+        try:
+            with st.spinner("Summarizing audit..."):
+                summarizer_module = _load_summarizer_module()
+                final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
+                final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
+                summary_bytes = summarizer_module.summarize_audit_report(
+                    audit_excel_input=audit_output_bytes,
+                    msg_template=summary_prompt,
+                    llm_provider=llm_provider,
+                    model_name=model_name,
+                    max_tokens=int(max_tokens),
+                    anthropic_api_key=final_anthropic_key,
+                    openai_api_key=final_openai_key,
+                    log_fn=st.write,
+                )
+            st.session_state["audit_summary_bytes"] = summary_bytes
+            st.success("Audit summary complete.")
+        except Exception as exc:
+            st.error(f"Audit summary failed: {exc}")
+
+    audit_summary_bytes = st.session_state.get("audit_summary_bytes")
+    if audit_summary_bytes:
+        st.download_button(
+            label="Download audit summary (.xlsx)",
+            data=audit_summary_bytes,
+            file_name="audit_summary.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
