@@ -256,8 +256,13 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
 
         if not audit_bytes:
-            st.error("Please provide a reformatted audit file before running the audit.")
-            return
+            if uploaded_audit is None:
+                st.error("Please upload an audit file before running the audit.")
+                return
+            with st.spinner("Reformatting audit..."):
+                output = handle_audit_reformat(uploaded_audit)
+                st.session_state["reformatted_audit_bytes"] = output.getvalue()
+                audit_bytes = st.session_state["reformatted_audit_bytes"]
 
         if not model_tree and not st.session_state.get("topics_to_audit"):
             topics_to_audit = None
