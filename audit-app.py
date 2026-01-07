@@ -110,6 +110,10 @@ def main():
     )
 
     if uploaded_audit:
+        if st.session_state.get("audit_source_name") != uploaded_audit.name:
+            st.session_state["audit_source_name"] = uploaded_audit.name
+            st.session_state.pop("reformatted_audit_bytes", None)
+            st.session_state.pop("audit_output_bytes", None)
         with st.expander("Reformat audit (optional)"):
             st.write("Download a sortable version of the input file.")
             if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
@@ -280,6 +284,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                     prompt_template=audit_prompt,
                     llm_provider=llm_provider,
                     model_name=model_name,
+                    model_info=model_info,
                     max_categories=int(max_categories),
                     max_sentences_per_category=int(max_sentences),
                     model_tree_bytes=model_tree.getvalue() if model_tree else None,
