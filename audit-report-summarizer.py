@@ -1,196 +1,226 @@
-import os
-import pandas as pd
+from __future__ import annotations
+
+import argparse
 from datetime import datetime
-from openpyxl import Workbook, load_workbook
-import yaml
-import anthropic
-from dotenv import load_dotenv
+from io import BytesIO
+import os
 import re
 
-#This script takes an XLSX input of a completed audit by an LLM containing a reason for the audit decision
-# and returns a summary of the found issues by category
-# as well as a suggestion of what rules probably need to be tweaked for each category
+import anthropic
+from dotenv import load_dotenv
+from openpyxl import Workbook
+import pandas as pd
+import yaml
 
-#TODO: Consider adding count of sentences checked and sentences found wrong to output, for greater transparancy around accuracy
-# - e.g. when LLM says "All 28 comments incorrectly categorized" raises questions - it's proba
 
-print("Starting script...")
+DEFAULT_MODEL = "claude-sonnet-4-5"
+DEFAULT_MAX_TOKENS = 10000
+DEFAULT_ACCURACY_THRESHOLD = 0.80
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-prompts_path = os.path.join(script_dir, 'prompts.yaml')
-inputs_dir = os.path.join(script_dir, "inputs")
-outputs_dir = os.path.join(script_dir, "outputs")
 
-try:
+def _load_prompts_config(prompts_path, config_key):
     with open(prompts_path, 'r') as f:
         prompts = yaml.safe_load(f)
-        summarizer_config = prompts['audit-report-summarizer']
-        msg_template = summarizer_config['rewards_msg_template']
-        audit_file_name = summarizer_config['audit_file']
-except FileNotFoundError:
-    print("Error: prompts.yaml not found")
-    exit(1)
-except KeyError as e:
-    print(f"Error: Missing key in YAML: {e}")
-    exit(1)
-
-load_dotenv()
-
-anthropic_key = os.getenv('ANTHROPIC_API_KEY')
-
-client = anthropic.Anthropic(api_key=anthropic_key)
-
-#Load completed audit file to be processed
-excel_path = os.path.join(inputs_dir, audit_file_name)
-df = pd.read_excel(excel_path)
+    return prompts[config_key]
 
 
-audit_findings = {} #turning the XLSX findings into a dict
+def _get_anthropic_client(anthropic_api_key=None):
+    load_dotenv()
+    api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+    return anthropic.Anthropic(api_key=api_key)
 
-# Assuming column A is Sentence ID, column B is 'Sentence', and column C is 'Category'
-#TODO: Validate column inputs
-id_col = df.columns[0]        # Column A (0-based index)
-sentence_col = df.columns[1]
-category_col = df.columns[2]
-judgment_col = df.columns[3]
-explan_col = df.columns[4]
 
-#Collect audit findings by row and add them to audit_findings dict
-#TODO: Validate if this approach also captures the header row; fix if so
-for _, row in df.iterrows():
-    category = row[category_col]
-    sentence_id = row[id_col]
-    sentence = row[sentence_col]
-    judgment = row[judgment_col]
-    explanation = row[explan_col]
-    if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id) or pd.isna(judgment) or pd.isna(explanation):
-        print("Skipped row during ingestion")
-        continue  # Skip rows with missing category, sentence, or sentence ID
-    if category not in audit_findings:
-        audit_findings[category] = {}
-    audit_findings[category][sentence_id] = (judgment, explanation)
+def _coerce_audit_bytes(audit_excel_input):
+    if audit_excel_input is None:
+        raise ValueError("audit_excel_input is required")
 
-#Create output workbook
-timestamp = datetime.now().strftime("%y%m%d%H%M")
-output_filename = f"audit_summary_{timestamp}.xlsx"
-output_path = os.path.join(outputs_dir, output_filename)
-if not os.path.exists(outputs_dir):
-    os.makedirs(outputs_dir)
+    if isinstance(audit_excel_input, (bytes, bytearray)):
+        return bytes(audit_excel_input)
 
-# Try to load the workbook if it exists, otherwise create a new one
-if os.path.exists(output_path):
-    wb = load_workbook(output_path)
-    ws = wb.active
-else:
+    if isinstance(audit_excel_input, BytesIO):
+        return audit_excel_input.getvalue()
+
+    if hasattr(audit_excel_input, "read"):
+        return audit_excel_input.read()
+
+    if isinstance(audit_excel_input, (str, os.PathLike)):
+        with open(audit_excel_input, "rb") as f:
+            return f.read()
+
+    raise TypeError("audit_excel_input must be bytes, BytesIO, file-like, or a path")
+
+
+def _build_audit_findings(df):
+    if len(df.columns) < 5:
+        raise ValueError("Audit report must contain at least five columns.")
+
+    id_col = df.columns[0]
+    sentence_col = df.columns[1]
+    category_col = df.columns[2]
+    judgment_col = df.columns[3]
+    explanation_col = df.columns[4]
+
+    audit_findings = {}
+    for _, row in df.iterrows():
+        category = row[category_col]
+        sentence_id = row[id_col]
+        sentence = row[sentence_col]
+        judgment = row[judgment_col]
+        explanation = row[explanation_col]
+        if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id) or pd.isna(judgment) or pd.isna(explanation):
+            continue
+        if category not in audit_findings:
+            audit_findings[category] = {}
+        audit_findings[category][sentence_id] = (judgment, explanation)
+    return audit_findings
+
+
+def _parse_llm_summary(response_text, log_fn):
+    pattern = r"SUMMARY:\s*(.+?)\s*RECOMMENDATION:\s*(.+)"
+    matches = re.findall(pattern, response_text, re.IGNORECASE | re.DOTALL)
+
+    if matches:
+        summary, recommendation = matches[0]
+        return summary.strip(), recommendation.strip()
+
+    log_fn("WARNING: REGEX FAILED TO PARSE LLM RESPONSE")
+    summary_match = re.search(r"SUMMARY:\s*(.+?)(?=RECOMMENDATION:|$)", response_text, re.IGNORECASE | re.DOTALL)
+    rec_match = re.search(r"RECOMMENDATION:\s*(.+?)$", response_text, re.IGNORECASE | re.DOTALL)
+
+    if summary_match and rec_match:
+        return summary_match.group(1).strip(), rec_match.group(1).strip()
+
+    return "REGEX FAILED TO PARSE LLM RESPONSE", response_text
+
+
+def summarize_audit_report(
+    audit_excel_input,
+    msg_template=None,
+    prompts_path=None,
+    output_path=None,
+    anthropic_api_key=None,
+    model_name=DEFAULT_MODEL,
+    max_tokens=DEFAULT_MAX_TOKENS,
+    accuracy_threshold=DEFAULT_ACCURACY_THRESHOLD,
+    log_fn=None,
+):
+    if log_fn is None:
+        log_fn = lambda *_args, **_kwargs: None
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    prompts_path = prompts_path or os.path.join(script_dir, "prompts.yaml")
+    if msg_template is None:
+        summarizer_config = _load_prompts_config(prompts_path, "audit-report-summarizer")
+        msg_template = summarizer_config["rewards_msg_template"]
+
+    audit_bytes = _coerce_audit_bytes(audit_excel_input)
+    df = pd.read_excel(BytesIO(audit_bytes))
+    audit_findings = _build_audit_findings(df)
+
+    client = _get_anthropic_client(anthropic_api_key)
+
     wb = Workbook()
     ws = wb.active
-    # Write header
     ws.append(["Category", "Accuracy", "Issues", "Recommendation"])
 
-#send audit explanation comments to LLM for summarization
-sentence_findings = {}
-percent_wrong = 0
-categories_checked = 1
-total_categories = len(audit_findings)
-categories_processed = []  
-error_count = 0
-
-for category in audit_findings:
-    try:
-        print(f"Reviewing audit findings for category '{category}' ({categories_checked} of {total_categories})...")   
-        inaccurate_sent_explanations = "" 
-        sentcount = 0
+    total_categories = len(audit_findings)
+    categories_checked = 1
+    for category, findings in audit_findings.items():
+        log_fn(f"Reviewing audit findings for category '{category}' ({categories_checked} of {total_categories})...")
+        inaccurate_sent_explanations = ""
+        sent_count = 0
         wrong_count = 0
 
-        #collect the explanation of sentence issues for sentence found to be inappropriately categorized
-        for sentence_id, (judgment, explanation) in audit_findings[category].items():
-            sentcount += 1
+        for _, (judgment, explanation) in findings.items():
+            sent_count += 1
             if judgment == "NO":
                 wrong_count += 1
-                # sentence_findings[judgment] = sentence[0]
                 inaccurate_sent_explanations += f"{explanation}\n"
-        
-        accuracy = round(((sentcount-wrong_count)/sentcount),2)
-        print(f"Detected {wrong_count} explanations out of {sentcount} sentences audited ({round(accuracy*100)}% accuracy)")
 
-        if accuracy < 0.80:
-        
-            # Prep message for LLM: Combine explanations with prompt (msg_template) and category
+        accuracy = round(((sent_count - wrong_count) / sent_count), 2) if sent_count else 0
+        log_fn(f"Detected {wrong_count} explanations out of {sent_count} sentences audited ({round(accuracy * 100)}% accuracy)")
+
+        if accuracy < accuracy_threshold:
             message_content = msg_template.format(
-            category=category,
-            # description=description,
-            inaccurate_sent_explanations=inaccurate_sent_explanations
+                category=category,
+                inaccurate_sent_explanations=inaccurate_sent_explanations,
             )
-            
-            print(f"Sending explanations to LLM for summarization...")
-            #Send message to LLM:
+            log_fn("Sending explanations to LLM for summarization...")
             message = client.messages.create(
-                model="claude-sonnet-4-5", #claude-haiku-4-5 is cheaper
-                max_tokens=10000,
+                model=model_name,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
                 ]
             )
-
-            # Parse the LLM response
             response_text = message.content[0].text
-
-            print("=" * 50)
-            print("FULL RESPONSE:")
-            print(response_text)  # Print the ENTIRE response
-            print("=" * 50)
-
-            # Regex to extract: SUMMARY: [LLM summary]; RECOMMENDATION: [LLM recommendation]
-            pattern = r"SUMMARY:\s*(.+?)\s*RECOMMENDATION:\s*(.+)"
-            matches = re.findall(pattern, response_text, re.IGNORECASE | re.DOTALL)
-
-            if matches:
-                summary, recommendation = matches[0]
-                summary = summary.strip()
-                recommendation = recommendation.strip()
-            else:
-                print("WARNING: REGEX FAILED TO PARSE LLM RESPONSE")
-                print(f"Attempting fallback parsing...")
-                
-                # Fallback: try to extract each section separately
-                summary_match = re.search(r"SUMMARY:\s*(.+?)(?=RECOMMENDATION:|$)", response_text, re.IGNORECASE | re.DOTALL)
-                rec_match = re.search(r"RECOMMENDATION:\s*(.+?)$", response_text, re.IGNORECASE | re.DOTALL)
-                
-                if summary_match and rec_match:
-                    summary = summary_match.group(1).strip()
-                    recommendation = rec_match.group(1).strip()
-                    print("Fallback parsing successful!")
-                else:
-                    summary = "REGEX FAILED TO PARSE LLM RESPONSE"
-                    recommendation = response_text  # Store full response for manual review
-
+            summary, recommendation = _parse_llm_summary(response_text, log_fn)
             ws.append([category, accuracy, summary, recommendation])
-
         else:
-            summary = ""
-            recommendation = ""
-            print("Category acuracy is high enough; moving on to next category")
-            ws.append([category, accuracy, summary, recommendation])
+            ws.append([category, accuracy, "", ""])
 
-        categories_processed.append(category)
+        categories_checked += 1
 
-    except Exception as e:
-        print(f"ERROR processing category '{category}': {e}")
-        error_count += 1
-        continue  # Skip this category and continue with the next
-    
-    categories_checked += 1
+    output = BytesIO()
+    wb.save(output)
+    wb.close()
+    output.seek(0)
+    output_bytes = output.getvalue()
 
-    wb.save(output_path)
+    if output_path:
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(output_bytes)
 
-wb.close()
+    return output_bytes
 
-print("Script concluded")
-print(f"Workbook saved to {output_path}")
-print(f"Ecountered {error_count} errors")
 
-# Identify missing categories
-missing_categories = set(audit_findings.keys()) - set(categories_processed)
-print(f"\nProcessed {len(categories_processed)} out of {total_categories} categories")
-if missing_categories:
-    print(f"Missing categories: {missing_categories}")
+def _resolve_output_path(outputs_dir):
+    timestamp = datetime.now().strftime("%y%m%d%H%M")
+    output_filename = f"audit_summary_{timestamp}.xlsx"
+    return os.path.join(outputs_dir, output_filename)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Summarize a completed audit report.")
+    parser.add_argument("--input", dest="input_path", help="Path to the completed audit .xlsx file")
+    parser.add_argument("--output", dest="output_path", help="Path to write the summary .xlsx file")
+    parser.add_argument("--prompts", dest="prompts_path", help="Path to prompts.yaml")
+    parser.add_argument("--api-key", dest="api_key", help="Anthropic API key override")
+    args = parser.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    prompts_path = args.prompts_path or os.path.join(script_dir, "prompts.yaml")
+    summarizer_config = _load_prompts_config(prompts_path, "audit-report-summarizer")
+
+    input_path = args.input_path
+    if not input_path:
+        audit_file_name = summarizer_config.get("audit_file")
+        if not audit_file_name:
+            raise ValueError("No input path provided and audit_file is missing in prompts.yaml")
+        input_path = os.path.join(script_dir, "inputs", audit_file_name)
+
+    outputs_dir = os.path.join(script_dir, "outputs")
+    output_path = args.output_path or _resolve_output_path(outputs_dir)
+
+    def _log(msg):
+        print(msg)
+
+    summarize_audit_report(
+        audit_excel_input=input_path,
+        msg_template=summarizer_config.get("rewards_msg_template"),
+        prompts_path=prompts_path,
+        output_path=output_path,
+        anthropic_api_key=args.api_key,
+        log_fn=_log,
+    )
+
+    print(f"Workbook saved to {output_path}")
+
+
+if __name__ == "__main__":
+    main()
