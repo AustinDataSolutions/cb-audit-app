@@ -12,8 +12,14 @@ from openpyxl import Workbook
 import pandas as pd
 import yaml
 
+try:
+    from openai import OpenAI
+except ImportError:  # Optional dependency
+    OpenAI = None
+
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
+DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 
@@ -24,12 +30,24 @@ def _load_prompts_config(prompts_path, config_key):
     return prompts[config_key]
 
 
-def _get_anthropic_client(anthropic_api_key=None):
+def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
     load_dotenv()
-    api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
-    return anthropic.Anthropic(api_key=api_key)
+
+    if llm_provider == "anthropic":
+        api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+        return anthropic.Anthropic(api_key=api_key)
+
+    if llm_provider == "openai":
+        if OpenAI is None:
+            raise RuntimeError("openai package is not installed")
+        api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY environment variable not set")
+        return OpenAI(api_key=api_key)
+
+    raise ValueError("llm_provider must be 'anthropic' or 'openai'")
 
 
 def _coerce_audit_bytes(audit_excel_input):
@@ -101,6 +119,8 @@ def summarize_audit_report(
     prompts_path=None,
     output_path=None,
     anthropic_api_key=None,
+    openai_api_key=None,
+    llm_provider="anthropic",
     model_name=DEFAULT_MODEL,
     max_tokens=DEFAULT_MAX_TOKENS,
     accuracy_threshold=DEFAULT_ACCURACY_THRESHOLD,
@@ -119,7 +139,9 @@ def summarize_audit_report(
     df = pd.read_excel(BytesIO(audit_bytes))
     audit_findings = _build_audit_findings(df)
 
-    client = _get_anthropic_client(anthropic_api_key)
+    client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
+    if model_name is None:
+        model_name = DEFAULT_MODEL if llm_provider == "anthropic" else DEFAULT_OPENAI_MODEL
 
     wb = Workbook()
     ws = wb.active
@@ -148,14 +170,25 @@ def summarize_audit_report(
                 inaccurate_sent_explanations=inaccurate_sent_explanations,
             )
             log_fn("Sending explanations to LLM for summarization...")
-            message = client.messages.create(
-                model=model_name,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "user", "content": message_content}
-                ]
-            )
-            response_text = message.content[0].text
+            if llm_provider == "anthropic":
+                message = client.messages.create(
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = message.content[0].text
+            elif llm_provider == "openai":
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = response.choices[0].message.content
+            else:
+                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
             summary, recommendation = _parse_llm_summary(response_text, log_fn)
             ws.append([category, accuracy, summary, recommendation])
         else:
