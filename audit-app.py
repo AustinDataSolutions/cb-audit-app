@@ -265,7 +265,24 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                 elif llm_provider == "openai" and openai_api_key:
                     api_key = openai_api_key
 
-    if st.button("Run audit", type="primary"):
+    missing_reasons = []
+    if not uploaded_audit:
+        missing_reasons.append("Upload an audit file")
+    if llm_provider == "anthropic":
+        if not (api_key or anthropic_api_key):
+            missing_reasons.append("Provide an Anthropic API key")
+    elif llm_provider == "openai":
+        if not (api_key or openai_api_key):
+            missing_reasons.append("Provide an OpenAI API key")
+
+    can_run_audit = not missing_reasons
+    run_help = (
+        None
+        if can_run_audit
+        else "; ".join(missing_reasons)
+    )
+
+    if st.button("Run audit", type="primary", disabled=not can_run_audit, help=run_help):
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
 
         if not audit_bytes:
