@@ -133,6 +133,7 @@ def run_audit(
     prompt_template,
     llm_provider,
     model_name=None,
+    model_info="",
     max_categories=DEFAULT_MAX_CATEGORIES,
     max_sentences_per_category=DEFAULT_MAX_SENTENCES_PER_CATEGORY,
     model_tree_bytes=None,
@@ -152,12 +153,44 @@ def run_audit(
 
     categories_to_audit = list(category_sentences.keys())
     if topics_to_audit:
-        topics_set = {str(topic) for topic in topics_to_audit}
-        filtered_categories = [cat for cat in categories_to_audit if str(cat) in topics_set]
+        def _normalize_topic(value):
+            text = str(value).strip()
+            return " ".join(text.split())
+
+        def _key(value):
+            text = _normalize_topic(value)
+            parts = [part.strip() for part in re.split(r"\s*-->\s*", text) if part.strip()]
+            normalized = "-->".join(parts) if parts else text
+            return normalized.casefold()
+
+        audit_categories_by_key = { _key(cat): cat for cat in categories_to_audit }
+
+        filtered_categories = []
+        seen = set()
+        for topic in topics_to_audit:
+            topic_key = _key(topic)
+            match = None
+            if topic_key in audit_categories_by_key:
+                match = [audit_categories_by_key[topic_key]]
+
+            if match:
+                for cat in match:
+                    if cat not in seen:
+                        filtered_categories.append(cat)
+                        seen.add(cat)
+            else:
+                log_fn(
+                    "Warning: Selected category not found in audit file. "
+                    f"Skipping audit for: {topic}"
+                )
+
         if filtered_categories:
             categories_to_audit = filtered_categories
         else:
-            log_fn("No selected topics matched the audit categories. Auditing all categories instead.")
+            raise ValueError(
+                "No selected topics matched the audit categories. "
+                "Check the selection or upload a matching model tree."
+            )
 
     client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
     if model_name is None:
@@ -192,6 +225,7 @@ def run_audit(
             category=category,
             description=description,
             sentences_text=sentences_text,
+            model_info=model_info or "",
         )
 
         log_fn(f"Sending message to LLM for category {category}...")
