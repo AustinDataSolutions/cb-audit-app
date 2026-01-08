@@ -49,10 +49,9 @@ def _add_model_average_row(ws_categories):
     average_cell.number_format = numbers.FORMAT_PERCENTAGE
 
 
-def _load_prompts_config(prompts_path, config_key):
-    with open(prompts_path, 'r') as f:
-        prompts = yaml.safe_load(f)
-    return prompts[config_key]
+def _load_yaml(path):
+    with open(path, 'r') as f:
+        return yaml.safe_load(f) or {}
 
 
 def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
@@ -312,26 +311,34 @@ def run_audit_from_config():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_path = os.path.join(script_dir, 'prompts.yaml')
+    config_path = os.path.join(script_dir, 'config.yaml')
     inputs_dir = os.path.join(script_dir, "inputs")
 
     try:
-        audit_config = _load_prompts_config(prompts_path, 'rewards_model_audit')
-        max_categories = audit_config['max_categories']
-        max_sentences_per_category = audit_config['max_sentences_per_category']
-        msg_template = audit_config['msg_template']
-        audit_file_name = audit_config['audit_file']
-        model_tree_file = audit_config['model_tree']
+        prompts = _load_yaml(prompts_path)
+        config = _load_yaml(config_path)
+        audit_config = config.get('cli_audit', {})
+        max_categories = audit_config.get('max_categories', DEFAULT_MAX_CATEGORIES)
+        max_sentences_per_category = audit_config.get(
+            'max_sentences_per_category',
+            DEFAULT_MAX_SENTENCES_PER_CATEGORY,
+        )
+        max_tokens = audit_config.get('max_tokens', DEFAULT_MAX_TOKENS)
+        msg_template = prompts.get('audit_prompt', '')
+        audit_file_name = audit_config.get('audit_file')
+        model_tree_file = audit_config.get('model_tree')
         audit_in_progress = audit_config.get('audit_in_progress')
-        llm_provider = audit_config['llm_provider']
+        llm_provider = audit_config.get('llm_provider', 'anthropic')
+        model_name = audit_config.get('model_name')
     except FileNotFoundError:
-        print("Error: prompts.yaml not found")
-        return
-    except KeyError as exc:
-        print(f"Error: Missing key in YAML: {exc}")
+        print("Error: prompts.yaml or config.yaml not found")
         return
 
     if llm_provider not in ["anthropic", "openai"]:
         print("Error: llm_provider not properly set in config file. Use 'anthropic' or 'openai'.")
+        return
+    if not audit_file_name:
+        print("Error: cli_audit.audit_file is missing in config.yaml")
         return
 
     client = _get_llm_client(llm_provider)
@@ -458,8 +465,8 @@ def run_audit_from_config():
 
         if llm_provider == 'anthropic':
             message = client.messages.create(
-                model=DEFAULT_ANTHROPIC_MODEL,
-                max_tokens=DEFAULT_MAX_TOKENS,
+                model=model_name or DEFAULT_ANTHROPIC_MODEL,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
                 ]
@@ -467,7 +474,7 @@ def run_audit_from_config():
             response_text = message.content[0].text
         else:
             response = client.chat.completions.create(
-                model=DEFAULT_OPENAI_MODEL,
+                model=model_name or DEFAULT_OPENAI_MODEL,
                 messages=[
                     {"role": "user", "content": message_content}
                 ]

@@ -13,9 +13,40 @@ def _load_summary_prompt(prompts_path):
     try:
         with open(prompts_path, "r") as f:
             prompts = yaml.safe_load(f)
-        return prompts["audit-report-summarizer"]["rewards_msg_template"]
+        return prompts.get("summary_prompt", "")
     except Exception:
         return ""
+
+
+def _load_audit_defaults(prompts_path):
+    try:
+        with open(prompts_path, "r") as f:
+            prompts = yaml.safe_load(f)
+        return {
+            "audit_prompt": prompts.get("audit_prompt", ""),
+            "model_info": prompts.get("model_info", ""),
+        }
+    except Exception:
+        return {"audit_prompt": "", "model_info": ""}
+
+
+def _load_app_defaults(config_path):
+    defaults = {
+        "llm_provider": "anthropic",
+        "model_name_anthropic": "claude-opus-4-5",
+        "model_name_openai": "gpt-5-nano",
+        "max_categories": 1000,
+        "max_sentences_per_category": 51,
+        "max_tokens": 10000,
+    }
+    try:
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+        app_defaults = config.get("app_defaults", {})
+        defaults.update({k: v for k, v in app_defaults.items() if v is not None})
+    except Exception:
+        pass
+    return defaults
 
 
 def _load_summarizer_module():
@@ -190,20 +221,10 @@ def main():
         type=["xml"],
     )
 
-    default_audit_prompt = """You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules.
-The following sentences come from AARP members and users.
-{model_info}
-The sentences have been tagged with the topic '{category}'.
-If a description for this topic exists, it follows here: '{description}'.
-For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
-Sentences can be tagged with multiple topics.
-Sentences do not need to mention AARP to be considered relevant to the topic.
-
-Sentences:
-{sentences_text}
-
-Respond in the strict format:
-ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
+    prompts_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    audit_defaults = _load_audit_defaults(prompts_path)
+    app_defaults = _load_app_defaults(config_path)
 
     if model_tree:
         if st.session_state.get("model_source_name") != model_tree.name:
@@ -236,48 +257,59 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
 
     st.subheader("Audit settings")
     st.write("Provide the LLM with a description of the model you're auditing, and instructions for how to carry out the audit.")
-    prompts_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
-    model_info = ""
     model_info = st.text_area(
         "About this model: (optional)", 
         max_chars=1000, 
+        value=audit_defaults["model_info"],
         help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
-        placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform that awards points for educational and entertainment activities. Users can exchange points for tangible rewards, including gift cards."
+        placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform that awards points for educational and entertainment activities."
         )
 
     audit_prompt = st.text_area(
         label="Task instructions:",
-        value=default_audit_prompt,
+        value=audit_defaults["audit_prompt"],
         max_chars=2500,
         placeholder="Tell the LLM what to do...",
         help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
     )
 
     with st.expander("Advanced"):
+        llm_provider_options = ["anthropic", "openai"]
+        default_provider = app_defaults["llm_provider"]
+        provider_index = (
+            llm_provider_options.index(default_provider)
+            if default_provider in llm_provider_options
+            else 0
+        )
         llm_provider = st.selectbox(
             "LLM provider",
-            options=["anthropic", "openai"],
+            options=llm_provider_options,
+            index=provider_index,
         )
 
-        default_model = "claude-opus-4-5" if llm_provider == "anthropic" else "gpt-5-nano"
+        default_model = (
+            app_defaults["model_name_anthropic"]
+            if llm_provider == "anthropic"
+            else app_defaults["model_name_openai"]
+        )
         model_name = st.text_input("Model name", value=default_model)
 
         max_categories = st.number_input(
             "Max categories to audit",
             min_value=1,
-            value=1000,
+            value=int(app_defaults["max_categories"]),
             step=1,
         )
         max_sentences = st.number_input(
             "Max sentences per category",
             min_value=1,
-            value=51,
+            value=int(app_defaults["max_sentences_per_category"]),
             step=1,
         )
         max_tokens = st.number_input(
             "Max tokens per request",
             min_value=1,
-            value=10000,
+            value=int(app_defaults["max_tokens"]),
             step=100,
         )
 

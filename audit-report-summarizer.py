@@ -44,10 +44,14 @@ def _build_summary_filename(input_name):
     return f"{base}_summary{ext}"
 
 
-def _load_prompts_config(prompts_path, config_key):
+def _load_prompts(prompts_path):
     with open(prompts_path, 'r') as f:
-        prompts = yaml.safe_load(f)
-    return prompts[config_key]
+        return yaml.safe_load(f) or {}
+
+
+def _load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f) or {}
 
 
 def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
@@ -156,8 +160,8 @@ def summarize_audit_report(
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_path = prompts_path or os.path.join(script_dir, "prompts.yaml")
     if msg_template is None:
-        summarizer_config = _load_prompts_config(prompts_path, "audit-report-summarizer")
-        msg_template = summarizer_config["rewards_msg_template"]
+        prompts = _load_prompts(prompts_path)
+        msg_template = prompts.get("summary_prompt", "")
 
     audit_bytes = _coerce_audit_bytes(audit_excel_input)
     df = pd.read_excel(BytesIO(audit_bytes))
@@ -253,18 +257,20 @@ def main():
     parser.add_argument("--input", dest="input_path", help="Path to the completed audit .xlsx file")
     parser.add_argument("--output", dest="output_path", help="Path to write the summary .xlsx file")
     parser.add_argument("--prompts", dest="prompts_path", help="Path to prompts.yaml")
+    parser.add_argument("--config", dest="config_path", help="Path to config.yaml")
     parser.add_argument("--api-key", dest="api_key", help="Anthropic API key override")
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_path = args.prompts_path or os.path.join(script_dir, "prompts.yaml")
-    summarizer_config = _load_prompts_config(prompts_path, "audit-report-summarizer")
+    config_path = args.config_path or os.path.join(script_dir, "config.yaml")
+    config = _load_config(config_path)
 
     input_path = args.input_path
     if not input_path:
-        audit_file_name = summarizer_config.get("audit_file")
+        audit_file_name = config.get("cli_summary", {}).get("audit_file")
         if not audit_file_name:
-            raise ValueError("No input path provided and audit_file is missing in prompts.yaml")
+            raise ValueError("No input path provided and cli_summary.audit_file is missing in config.yaml")
         input_path = os.path.join(script_dir, "inputs", audit_file_name)
 
     outputs_dir = os.path.join(script_dir, "outputs")
@@ -275,7 +281,7 @@ def main():
 
     summarize_audit_report(
         audit_excel_input=input_path,
-        msg_template=summarizer_config.get("rewards_msg_template"),
+        msg_template=_load_prompts(prompts_path).get("summary_prompt", ""),
         prompts_path=prompts_path,
         output_path=output_path,
         anthropic_api_key=args.api_key,

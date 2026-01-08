@@ -1,47 +1,32 @@
-# prompts.yaml
-rewards_model_audit:
-  msg_template: |
-    You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules. 
-    The following sentences come from AARP members and users when discussing AARP Rewards, a gamified interactive loyalty program.
-    AARP Rewards gives users points for completing quizzes and games, watching videos, connecting fitness trackers, and more such activities.
-    Users can redeem points for rewards, which are most often gift cards to various merchants and companies, including cruise lines.
-    The document sources are diverse and include transcripts of calls, chats, social media posts, and more.
-    This feedback has been tagged with the topic '{category}'. (Sentences can be tagged with multiple topics.)
-    If a description for this category exists, it follows here: '{description}'.
+audit_prompt: |
+  You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules.
+  The following sentences come from AARP members and users.
+  {model_info}
+  The sentences have been tagged with the topic '{category}'.
+  If a description for this topic exists, it follows here: '{description}'.
+  For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
+  Sentences can be tagged with multiple topics.
+  Sentences do not need to mention AARP to be considered relevant to the topic.
 
-    For each sentence, return a binary judgment on whether the sentence is appropriately assigned to the topic, and also a brief explanation of your reasoning.
+  Sentences:
+  {sentences_text}
 
-    Sentences do not need to mention AARP or AARP Rewards directly to be considered relevant to the category.
+  Respond in the strict format:
+  ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]
+model_info: ""
+summary_prompt: |
+  The following comments are LLM-generated judgments about why a certain sentence of customer feedback was incorrectly categorized into a particular topic of a topic model.
+  The audited sentences (not included here) related to mentions of the AARP Rewards loyalty program.
+  Comments came from various sources including call transcripts, social media comments, survey responses, chats.
+  The topic being audited for this batch of comments was '{category}'.
+  The category rules are based on boolean logic, such as the following example syntax: ((app, "AARP Now") AND (download*, install*) NOT (installer)).
+  Briefly summarize the issues identified in these explanations, leading with any issues that came up repeatedly.
+  Be succinct and write in note form, e.g. "several sentences relating to X; 2 incoherent sentences"
+  Then write an extremely brief recommendation for addressing the issue in the topic rules, e.g. "Exclude long term care insurance" for a topic about long term care facilities.
+  If you don't have enough information to make a clear recommendation, write "NA".
 
-    Sentences:
-    {sentences_text}
+  Comments:
+  {inaccurate_sent_explanations}
 
-    Respond in the strict format:
-    ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]
-  max_categories: 1000
-  max_sentences_per_category: 51
-  audit_file: "audit_3_AARP Rewards_16_12_25.xlsx"
-  model_tree: "3_AARP Rewards(1).xml"
-  llm_provider: "anthropic"
-  audit_in_progress: ""
-
-
-
-audit-report-summarizer:
-  audit_file: "completed_rewards_audit_2512161445.xlsx"
-  rewards_msg_template: | 
-    The following comments are LLM-generated judgments about why a certain sentence of customer feedback was incorrectly categorized into a particular topic of a topic model.
-    The audited sentences (not included here) related to mentions of the AARP Rewards loyalty program.
-    Comments came from various sources including call transcripts, social media comments, survey responses, chats.
-    The topic being audited for this batch of comments was '{category}'.
-    The category rules are based on boolean logic, such as the following example syntax: ((app, "AARP Now") AND (download*, install*) NOT (installer)).
-    Briefly summarize the issues identified in these explanations, leading with any issues that came up repeatedly.
-    Be succinct and write in note form, e.g. "several sentences relating to X; 2 incoherent sentences"
-    Then write an extremely brief recommendation for addressing the issue in the topic rules, e.g. "Exclude long term care insurance" for a topic about long term care facilities. 
-    If you don't have enough information to make a clear recommendation, write "NA".
-
-    Comments:
-    {inaccurate_sent_explanations}
-
-    Respond in exactly this format without any additional text:
-    SUMMARY: [your summary]; RECOMMENDATION: [your recommendation]
+  Respond in exactly this format without any additional text:
+  SUMMARY: [your summary]; RECOMMENDATION: [your recommendation]
