@@ -1,7 +1,16 @@
+import os
 from io import BytesIO
 
 import pandas as pd
 import xlsxwriter
+
+
+def _build_sortable_filename(uploaded_file):
+    original_name = getattr(uploaded_file, "name", "") or "reformatted_audit.xlsx"
+    base, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".xlsx"
+    return f"{base}_sortable{ext}"
 
 
 def handle_audit_reformat(uploaded_file):
@@ -170,4 +179,5 @@ def handle_audit_reformat(uploaded_file):
     worksheet.set_column(4, 4, 14)
     workbook.close()
     output.seek(0)
-    return output
+    output_filename = _build_sortable_filename(uploaded_file)
+    return output, output_filename

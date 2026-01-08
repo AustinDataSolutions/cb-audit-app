@@ -24,6 +24,16 @@ DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 
 
+def _build_completed_filename(input_name):
+    base, ext = os.path.splitext(input_name)
+    for suffix in ("_sortable", "_completed"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    if not ext:
+        ext = ".xlsx"
+    return f"{base}_completed{ext}"
+
+
 def _load_prompts_config(prompts_path, config_key):
     with open(prompts_path, 'r') as f:
         prompts = yaml.safe_load(f)
@@ -212,9 +222,13 @@ def summarize_audit_report(
     return output_bytes
 
 
-def _resolve_output_path(outputs_dir):
-    timestamp = datetime.now().strftime("%y%m%d%H%M")
-    output_filename = f"audit_summary_{timestamp}.xlsx"
+def _resolve_output_path(outputs_dir, input_path=None):
+    if input_path:
+        input_name = os.path.basename(input_path)
+        output_filename = _build_completed_filename(input_name)
+    else:
+        timestamp = datetime.now().strftime("%y%m%d%H%M")
+        output_filename = f"audit_summary_{timestamp}.xlsx"
     return os.path.join(outputs_dir, output_filename)
 
 
@@ -238,7 +252,7 @@ def main():
         input_path = os.path.join(script_dir, "inputs", audit_file_name)
 
     outputs_dir = os.path.join(script_dir, "outputs")
-    output_path = args.output_path or _resolve_output_path(outputs_dir)
+    output_path = args.output_path or _resolve_output_path(outputs_dir, input_path)
 
     def _log(msg):
         print(msg)
