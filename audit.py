@@ -30,7 +30,7 @@ def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
     sheet_ref = f"'{sentences_sheet_title}'"
     category_col = f"{sheet_ref}!C:C"
     judgment_col = f"{sheet_ref}!D:D"
-    category_cell = f"A{row_idx}"
+    category_cell = "INDEX(A:A, ROW())"
     formula = (
         f"=IF(COUNTIF({category_col}, {category_cell})=0, 0, "
         f"COUNTIFS({category_col}, {category_cell}, {judgment_col}, \"YES\")/COUNTIF({category_col}, {category_cell}))"
@@ -232,10 +232,11 @@ def run_audit(
 
     wb = Workbook()
     ws = wb.active
-    ws.append(["Sentence ID", "Sentence", "Category", "NLP Judgment", "Explanation"])
+    ws.title = "Sentences"
+    ws.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
 
-    ws_categories = wb.create_sheet(title="categories")
-    ws_categories.append(["Category", "Description", "Precision Rate", "Finding", "Recommendation"])
+    ws_categories = wb.create_sheet(title="Topics")
+    ws_categories.append(["Topic", "Description", "Accuracy"])
 
     total_categories = min(len(categories_to_audit), max_categories)
     cat_count = 0
@@ -293,7 +294,7 @@ def run_audit(
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
             ws.append([sentence_id, sentence, category, judgment, explanation])
 
-        ws_categories.append([category, description, "", "", ""])
+        ws_categories.append([category, description, ""])
         _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
 
     if ws_categories.max_row > 1:
@@ -373,17 +374,31 @@ def run_audit_from_config():
 
     if resume_mode:
         wb = load_workbook(output_path)
-        ws = wb.active
+        if "Sentences" in wb.sheetnames:
+            ws = wb["Sentences"]
+        else:
+            ws = wb.active
+            if ws.title == "Topics":
+                for sheet_name in wb.sheetnames:
+                    if sheet_name != "Topics":
+                        ws = wb[sheet_name]
+                        break
+            if ws.title != "Sentences":
+                ws.title = "Sentences"
     else:
         wb = Workbook()
         ws = wb.active
-        ws.append(["Sentence ID", "Sentence", "Category", "NLP Judgment", "Explanation"])
+        ws.title = "Sentences"
+        ws.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
 
-    if "categories" not in wb.sheetnames:
-        ws_categories = wb.create_sheet(title="categories")
-        ws_categories.append(["Category", "Description", "Precision Rate", "Finding", "Recommendation"])
-    else:
+    if "Topics" in wb.sheetnames:
+        ws_categories = wb["Topics"]
+    elif "categories" in wb.sheetnames:
         ws_categories = wb["categories"]
+        ws_categories.title = "Topics"
+    else:
+        ws_categories = wb.create_sheet(title="Topics")
+        ws_categories.append(["Topic", "Description", "Accuracy"])
 
     if resume_mode:
         existing_categories = [
@@ -468,7 +483,7 @@ def run_audit_from_config():
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
             ws.append([sentence_id, sentence, category, judgment, explanation])
 
-        ws_categories.append([category, description, "", "", ""])
+        ws_categories.append([category, description, ""])
         _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
         wb.save(output_path)
 
