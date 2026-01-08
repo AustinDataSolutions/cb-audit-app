@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import yaml
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import numbers
 
 try:
     from openai import OpenAI
@@ -23,6 +24,29 @@ DEFAULT_MAX_SENTENCES_PER_CATEGORY = 51
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
+
+
+def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
+    sheet_ref = f"'{sentences_sheet_title}'"
+    category_col = f"{sheet_ref}!C:C"
+    judgment_col = f"{sheet_ref}!D:D"
+    category_cell = f"A{row_idx}"
+    formula = (
+        f"=IF(COUNTIF({category_col}, {category_cell})=0, 0, "
+        f"COUNTIFS({category_col}, {category_cell}, {judgment_col}, \"YES\")/COUNTIF({category_col}, {category_cell}))"
+    )
+    cell = ws_categories.cell(row=row_idx, column=3)
+    cell.value = formula
+    cell.number_format = numbers.FORMAT_PERCENTAGE
+
+
+def _add_model_average_row(ws_categories):
+    ws_categories.insert_rows(2)
+    ws_categories.cell(row=2, column=1, value="MODEL AVERAGE")
+    last_row = ws_categories.max_row
+    average_cell = ws_categories.cell(row=2, column=3)
+    average_cell.value = f"=AVERAGE(C3:C{last_row})"
+    average_cell.number_format = numbers.FORMAT_PERCENTAGE
 
 
 def _load_prompts_config(prompts_path, config_key):
@@ -270,6 +294,10 @@ def run_audit(
             ws.append([sentence_id, sentence, category, judgment, explanation])
 
         ws_categories.append([category, description, "", "", ""])
+        _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
+
+    if ws_categories.max_row > 1:
+        _add_model_average_row(ws_categories)
 
     output = BytesIO()
     wb.save(output)
@@ -441,6 +469,11 @@ def run_audit_from_config():
             ws.append([sentence_id, sentence, category, judgment, explanation])
 
         ws_categories.append([category, description, "", "", ""])
+        _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
+        wb.save(output_path)
+
+    if ws_categories.max_row > 1:
+        _add_model_average_row(ws_categories)
         wb.save(output_path)
 
     wb.close()
