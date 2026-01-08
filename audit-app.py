@@ -424,11 +424,23 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
     )
 
     if st.button("Run summary", type="primary", disabled=not can_run_summary, help=summary_help):
+        progress_text = None
+        progress_bar = None
         try:
             with st.spinner("Summarizing audit..."):
                 summarizer_module = _load_summarizer_module()
                 final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
                 final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
+                progress_container = st.container()
+                progress_text = progress_container.empty()
+                progress_bar = progress_container.progress(0)
+
+                def _update_summary_progress(current, total, category_name):
+                    progress_text.write(
+                        f"Summarizing category {current} of {total}: {category_name}"
+                    )
+                    progress_bar.progress(current / total if total else 0)
+
                 summary_bytes = summarizer_module.summarize_audit_report(
                     audit_excel_input=audit_output_bytes,
                     msg_template=summary_prompt,
@@ -438,11 +450,19 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                     anthropic_api_key=final_anthropic_key,
                     openai_api_key=final_openai_key,
                     log_fn=st.write,
+                    warn_fn=st.warning,
+                    progress_fn=_update_summary_progress,
                 )
+                progress_bar.progress(1.0)
             st.session_state["audit_summary_bytes"] = summary_bytes
             st.success("Audit summary complete.")
         except Exception as exc:
             st.error(f"Audit summary failed: {exc}")
+        finally:
+            if progress_text is not None:
+                progress_text.empty()
+            if progress_bar is not None:
+                progress_bar.empty()
 
     audit_summary_bytes = st.session_state.get("audit_summary_bytes")
     if audit_summary_bytes:

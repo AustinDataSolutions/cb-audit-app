@@ -145,9 +145,13 @@ def summarize_audit_report(
     max_tokens=DEFAULT_MAX_TOKENS,
     accuracy_threshold=DEFAULT_ACCURACY_THRESHOLD,
     log_fn=None,
+    warn_fn=None,
+    progress_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
+    if warn_fn is None:
+        warn_fn = log_fn
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_path = prompts_path or os.path.join(script_dir, "prompts.yaml")
@@ -170,7 +174,9 @@ def summarize_audit_report(
     total_categories = len(audit_findings)
     categories_checked = 1
     for category, findings in audit_findings.items():
-        log_fn(f"Reviewing audit findings for category '{category}' ({categories_checked} of {total_categories})...")
+        if progress_fn:
+            progress_fn(categories_checked, total_categories, category)
+        # log_fn(f"Reviewing audit findings for category '{category}' ({categories_checked} of {total_categories})...")
         inaccurate_sent_explanations = ""
         sent_count = 0
         wrong_count = 0
@@ -182,14 +188,14 @@ def summarize_audit_report(
                 inaccurate_sent_explanations += f"{explanation}\n"
 
         accuracy = round(((sent_count - wrong_count) / sent_count), 2) if sent_count else 0
-        log_fn(f"Detected {wrong_count} explanations out of {sent_count} sentences audited ({round(accuracy * 100)}% accuracy)")
+        # log_fn(f"Detected {wrong_count} explanations out of {sent_count} sentences audited ({round(accuracy * 100)}% accuracy)")
 
         if accuracy < accuracy_threshold:
             message_content = msg_template.format(
                 category=category,
                 inaccurate_sent_explanations=inaccurate_sent_explanations,
             )
-            log_fn("Sending explanations to LLM for summarization...")
+            # log_fn("Sending explanations to LLM for summarization...")
             if llm_provider == "anthropic":
                 message = client.messages.create(
                     model=model_name,
@@ -209,7 +215,7 @@ def summarize_audit_report(
                 response_text = response.choices[0].message.content
             else:
                 raise ValueError("llm_provider must be 'anthropic' or 'openai'")
-            summary, recommendation = _parse_llm_summary(response_text, log_fn)
+            summary, recommendation = _parse_llm_summary(response_text, warn_fn)
             ws.append([category, accuracy, summary, recommendation])
         else:
             ws.append([category, accuracy, "", ""])
