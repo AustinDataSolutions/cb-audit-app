@@ -224,6 +224,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
     st.subheader("Audit settings")
+    st.write("Provide the LLM with a description of the model you're auditing, and instructions for how to carry out the audit.")
     prompts_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
     model_info = ""
     model_info = st.text_area(
@@ -332,6 +333,16 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
 
         try:
             with st.spinner("Running audit..."):
+                progress_container = st.container()
+                progress_text = progress_container.empty()
+                progress_bar = progress_container.progress(0)
+
+                def _update_progress(current, total, category_name):
+                    progress_text.write(
+                        f"Auditing category {current} of {total}: {category_name}"
+                    )
+                    progress_bar.progress(current / total if total else 0)
+
                 # Use api_key if set, otherwise use the text input values
                 final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
                 final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
@@ -350,7 +361,12 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
                     openai_api_key=final_openai_key,
                     max_tokens=int(max_tokens),
                     log_fn=st.write,
+                    warn_fn=st.warning,
+                    progress_fn=_update_progress,
                 )
+                progress_bar.progress(1.0)
+                progress_text.empty()
+                progress_bar.empty()
             st.session_state["audit_output_bytes"] = output_bytes
             st.session_state.pop("audit_summary_bytes", None)
             st.success("Audit complete.")

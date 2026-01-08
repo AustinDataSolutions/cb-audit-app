@@ -142,9 +142,13 @@ def run_audit(
     openai_api_key=None,
     max_tokens=DEFAULT_MAX_TOKENS,
     log_fn=None,
+    warn_fn=None,
+    progress_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
+    if warn_fn is None:
+        warn_fn = log_fn
 
     df = pd.read_excel(BytesIO(audit_excel_bytes))
     category_sentences = _build_category_sentences(df)
@@ -167,6 +171,7 @@ def run_audit(
 
         filtered_categories = []
         seen = set()
+        unmatched_topics = []
         for topic in topics_to_audit:
             topic_key = _key(topic)
             match = None
@@ -179,10 +184,15 @@ def run_audit(
                         filtered_categories.append(cat)
                         seen.add(cat)
             else:
-                log_fn(
-                    "Warning: Selected category not found in audit file. "
-                    f"Skipping audit for: {topic}"
-                )
+                unmatched_topics.append(topic)
+
+        if unmatched_topics:
+            unmatched_list = "\n".join(f"- {topic}" for topic in unmatched_topics)
+            warn_fn(
+                "Warning: Selected categories not found in audit file. "
+                "Skipping audit for:\n"
+                f"{unmatched_list}"
+            )
 
         if filtered_categories:
             categories_to_audit = filtered_categories
@@ -203,12 +213,15 @@ def run_audit(
     ws_categories = wb.create_sheet(title="categories")
     ws_categories.append(["Category", "Description", "Precision Rate", "Finding", "Recommendation"])
 
+    total_categories = min(len(categories_to_audit), max_categories)
     cat_count = 0
     for category in categories_to_audit:
         cat_count += 1
         if cat_count > max_categories:
             log_fn("Reached max_categories limit.")
             break
+        if progress_fn:
+            progress_fn(cat_count, total_categories, category)
 
         description = category_descriptions.get(category, "None") or "None"
 
@@ -228,7 +241,7 @@ def run_audit(
             model_info=model_info or "",
         )
 
-        log_fn(f"Sending message to LLM for category {category}...")
+        # log_fn(f"Sending message to LLM for category {category}...")
 
         if llm_provider == 'anthropic':
             message = client.messages.create(
