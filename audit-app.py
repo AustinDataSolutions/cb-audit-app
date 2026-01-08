@@ -479,6 +479,7 @@ def main():
                     llm_provider=llm_provider,
                     model_name=model_name,
                     max_tokens=int(max_tokens),
+                    model_info=model_info,
                     anthropic_api_key=final_anthropic_key,
                     openai_api_key=final_openai_key,
                     log_fn=st.write,

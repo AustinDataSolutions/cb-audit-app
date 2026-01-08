@@ -25,4 +25,4 @@ summary_prompt: |
   {inaccurate_sent_explanations}
 
   Respond in exactly this format without any additional text:
-  SUMMARY: [your summary];
+  SUMMARY: [your summary]

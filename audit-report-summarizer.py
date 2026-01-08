@@ -146,6 +146,7 @@ def summarize_audit_report(
     model_name=DEFAULT_MODEL,
     max_tokens=DEFAULT_MAX_TOKENS,
     accuracy_threshold=DEFAULT_ACCURACY_THRESHOLD,
+    model_info="",
     log_fn=None,
     warn_fn=None,
     progress_fn=None,
@@ -196,6 +197,7 @@ def summarize_audit_report(
             message_content = msg_template.format(
                 category=category,
                 inaccurate_sent_explanations=inaccurate_sent_explanations,
+                model_info=model_info or "",
             )
             # log_fn("Sending explanations to LLM for summarization...")
             if llm_provider == "anthropic":
