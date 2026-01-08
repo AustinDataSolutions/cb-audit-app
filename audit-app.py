@@ -36,6 +36,17 @@ def _build_completed_filename(uploaded_file):
         ext = ".xlsx"
     return f"{base}_completed{ext}"
 
+
+def _build_summary_filename(uploaded_file):
+    original_name = getattr(uploaded_file, "name", "") or "audit_summary.xlsx"
+    base, ext = os.path.splitext(original_name)
+    for suffix in ("_sortable", "_completed", "_summary"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    if not ext:
+        ext = ".xlsx"
+    return f"{base}_summary{ext}"
+
 #This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
 #It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
 #then will present the user an interface to allow them to select what part of the model they want audited,
@@ -438,7 +449,7 @@ ID: [sentence_id] - Judgment: [YES/NO] - Reasoning: [brief explanation]"""
         st.download_button(
             label="Download audit summary (.xlsx)",
             data=audit_summary_bytes,
-            file_name="audit_summary.xlsx",
+            file_name=_build_summary_filename(uploaded_audit),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 

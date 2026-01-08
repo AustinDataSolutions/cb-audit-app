@@ -34,6 +34,16 @@ def _build_completed_filename(input_name):
     return f"{base}_completed{ext}"
 
 
+def _build_summary_filename(input_name):
+    base, ext = os.path.splitext(input_name)
+    for suffix in ("_sortable", "_completed", "_summary"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    if not ext:
+        ext = ".xlsx"
+    return f"{base}_summary{ext}"
+
+
 def _load_prompts_config(prompts_path, config_key):
     with open(prompts_path, 'r') as f:
         prompts = yaml.safe_load(f)
@@ -225,7 +235,7 @@ def summarize_audit_report(
 def _resolve_output_path(outputs_dir, input_path=None):
     if input_path:
         input_name = os.path.basename(input_path)
-        output_filename = _build_completed_filename(input_name)
+        output_filename = _build_summary_filename(input_name)
     else:
         timestamp = datetime.now().strftime("%y%m%d%H%M")
         output_filename = f"audit_summary_{timestamp}.xlsx"
