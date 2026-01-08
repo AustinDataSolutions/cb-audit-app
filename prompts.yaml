@@ -1,10 +1,9 @@
 audit_prompt: |
-  You are auditing the accuracy of a topic in a topic model that is based on deterministic search rules.
-  The following sentences come from AARP members and users.
+  You are auditing the accuracy of a topic in a topic model.
   {model_info}
-  The sentences have been tagged with the topic '{category}'.
+  The sentences below come from AARP members and users, and were labeled with the topic '{category}'.
   If a description for this topic exists, it follows here: '{description}'.
-  For each sentence, return a binary judgment on whether the sentence belongs in the topic, and also a brief explanation of your reasoning.
+  For each sentence, return a binary judgment on whether the sentence was accurately labeled with the topic, and also a brief explanation of your reasoning.
   Sentences can be tagged with multiple topics.
   Sentences do not need to mention AARP to be considered relevant to the topic.
 
@@ -20,7 +19,7 @@ summary_prompt: |
   Your job is to succinctly summarize the issues identified in these explanations, leading with any issues that came up repeatedly.
   Write in note form, e.g. "several sentences relating to X; 2 incoherent sentences".
 
-  The following is additional information about the model and the feedback it targets: {model_info}
+  The following is additional information about the topic model and the feedback it aims to categorize: {model_info}
 
   Comments:
   {inaccurate_sent_explanations}
