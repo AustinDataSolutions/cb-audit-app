@@ -56,18 +56,16 @@ def test_coerce_audit_bytes_accepts_path(tmp_path):
 
 def test_parse_llm_summary_parses_sections():
     summarizer = _load_summarizer_module()
-    response_text = "SUMMARY: issue one; issue two RECOMMENDATION: tighten rules"
-    summary, recommendation = summarizer._parse_llm_summary(response_text, lambda *_args: None)
+    response_text = "SUMMARY: issue one; issue two"
+    summary = summarizer._parse_llm_summary(response_text, lambda *_args: None)
     assert summary == "issue one; issue two"
-    assert recommendation == "tighten rules"
 
 
 def test_parse_llm_summary_reports_failure():
     summarizer = _load_summarizer_module()
     response_text = "No expected sections here."
-    summary, recommendation = summarizer._parse_llm_summary(response_text, lambda *_args: None)
+    summary = summarizer._parse_llm_summary(response_text, lambda *_args: None)
     assert summary == "REGEX FAILED TO PARSE LLM RESPONSE"
-    assert recommendation == response_text
 
 
 def test_build_audit_findings_skips_missing_rows():

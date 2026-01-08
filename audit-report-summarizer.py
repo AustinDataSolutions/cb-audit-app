@@ -120,21 +120,19 @@ def _build_audit_findings(df):
 
 
 def _parse_llm_summary(response_text, log_fn):
-    pattern = r"SUMMARY:\s*(.+?)\s*RECOMMENDATION:\s*(.+)"
+    pattern = r"SUMMARY:\s*(.+)"
     matches = re.findall(pattern, response_text, re.IGNORECASE | re.DOTALL)
 
     if matches:
-        summary, recommendation = matches[0]
-        return summary.strip(), recommendation.strip()
+        summary = matches[0]
+        return summary.strip()
 
     log_fn("WARNING: REGEX FAILED TO PARSE LLM RESPONSE")
-    summary_match = re.search(r"SUMMARY:\s*(.+?)(?=RECOMMENDATION:|$)", response_text, re.IGNORECASE | re.DOTALL)
-    rec_match = re.search(r"RECOMMENDATION:\s*(.+?)$", response_text, re.IGNORECASE | re.DOTALL)
+    summary_match = re.search(r"SUMMARY:\s*(.+?)$", response_text, re.IGNORECASE | re.DOTALL)
+    if summary_match:
+        return summary_match.group(1).strip()
 
-    if summary_match and rec_match:
-        return summary_match.group(1).strip(), rec_match.group(1).strip()
-
-    return "REGEX FAILED TO PARSE LLM RESPONSE", response_text
+    return "REGEX FAILED TO PARSE LLM RESPONSE"
 
 
 def summarize_audit_report(
@@ -173,7 +171,7 @@ def summarize_audit_report(
 
     wb = Workbook()
     ws = wb.active
-    ws.append(["Category", "Accuracy", "Issues", "Recommendation"])
+    ws.append(["Category", "Accuracy", "Issues"])
 
     total_categories = len(audit_findings)
     categories_checked = 1
@@ -219,10 +217,10 @@ def summarize_audit_report(
                 response_text = response.choices[0].message.content
             else:
                 raise ValueError("llm_provider must be 'anthropic' or 'openai'")
-            summary, recommendation = _parse_llm_summary(response_text, warn_fn)
-            ws.append([category, accuracy, summary, recommendation])
+            summary = _parse_llm_summary(response_text, warn_fn)
+            ws.append([category, accuracy, summary])
         else:
-            ws.append([category, accuracy, "", ""])
+            ws.append([category, accuracy, ""])
 
         categories_checked += 1
 
