@@ -2,8 +2,8 @@ app_defaults:
   llm_provider: "anthropic"
   model_name_anthropic: "claude-opus-4-5"
   model_name_openai: "gpt-5-nano"
-  max_categories: 1000
-  max_sentences_per_category: 51
+  max_categories: 500
+  max_sentences_per_category: 50
   max_tokens: 10000
 
 cli_audit:
@@ -12,8 +12,8 @@ cli_audit:
   audit_in_progress: ""
   llm_provider: "anthropic"
   model_name: ""
-  max_categories: 1000
-  max_sentences_per_category: 51
+  max_categories: 500
+  max_sentences_per_category: 50
   max_tokens: 10000
 
 cli_summary:
