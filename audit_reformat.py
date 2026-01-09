@@ -4,6 +4,7 @@ from io import BytesIO
 import pandas as pd
 import xlsxwriter
 
+from audit_validation import validate_audit_sentences_sheet
 
 def _build_sortable_filename(uploaded_file):
     original_name = getattr(uploaded_file, "name", "") or "reformatted_audit.xlsx"
@@ -15,6 +16,7 @@ def _build_sortable_filename(uploaded_file):
 
 def handle_audit_reformat(uploaded_file):
     file_bytes = uploaded_file.read()
+    _, _, _, warnings = validate_audit_sentences_sheet(file_bytes)
     excel_file = pd.ExcelFile(BytesIO(file_bytes))
 
     sentences_sheet = excel_file.parse(excel_file.sheet_names[0], header=None)
@@ -180,4 +182,4 @@ def handle_audit_reformat(uploaded_file):
     workbook.close()
     output.seek(0)
     output_filename = _build_sortable_filename(uploaded_file)
-    return output, output_filename
+    return output, output_filename, warnings

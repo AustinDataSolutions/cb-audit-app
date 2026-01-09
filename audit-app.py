@@ -199,8 +199,10 @@ def main():
                     st.error("Please upload an audit file before processing.")
                     return
                 with st.spinner("Reformatting audit..."):
-                    output, output_filename = handle_audit_reformat(uploaded_audit)
+                    output, output_filename, warnings = handle_audit_reformat(uploaded_audit)
                     st.success("Reformat complete.")
+                    if warnings:
+                        st.warning("Input audit file warnings:\n" + "\n".join(warnings))
                     st.session_state["reformatted_audit_bytes"] = output.getvalue()
                     st.download_button(
                         label="Download reformatted audit",
@@ -365,7 +367,9 @@ def main():
                 st.error("Please upload an audit file before running the audit.")
                 return
             with st.spinner("Reformatting audit..."):
-                output, _ = handle_audit_reformat(uploaded_audit)
+                output, _, warnings = handle_audit_reformat(uploaded_audit)
+                if warnings:
+                    st.warning("Input audit file warnings:\n" + "\n".join(warnings))
                 st.session_state["reformatted_audit_bytes"] = output.getvalue()
                 audit_bytes = st.session_state["reformatted_audit_bytes"]
 

@@ -12,6 +12,7 @@ import pandas as pd
 import yaml
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import numbers
+from audit_validation import validate_audit_sentences_sheet
 
 try:
     from openai import OpenAI
@@ -173,7 +174,14 @@ def run_audit(
     if warn_fn is None:
         warn_fn = log_fn
 
-    df = pd.read_excel(BytesIO(audit_excel_bytes))
+    sentences_sheet, header_row_idx, _, warnings = validate_audit_sentences_sheet(audit_excel_bytes)
+    if warnings:
+        warn_fn("Input audit file warnings:\n" + "\n".join(warnings))
+    df = pd.read_excel(
+        BytesIO(audit_excel_bytes),
+        sheet_name=sentences_sheet,
+        header=header_row_idx,
+    )
     category_sentences = _build_category_sentences(df)
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
@@ -345,7 +353,13 @@ def run_audit_from_config():
     print("Retrieved API key")
 
     excel_path = os.path.join(inputs_dir, audit_file_name)
-    df = pd.read_excel(excel_path)
+    with open(excel_path, "rb") as f:
+        file_bytes = f.read()
+    sentences_sheet, header_row_idx, _, warnings = validate_audit_sentences_sheet(file_bytes)
+    if warnings:
+        for warning in warnings:
+            print(f"WARNING: {warning}")
+    df = pd.read_excel(excel_path, sheet_name=sentences_sheet, header=header_row_idx)
     category_sentences = _build_category_sentences(df)
 
     model_tree_bytes = None
