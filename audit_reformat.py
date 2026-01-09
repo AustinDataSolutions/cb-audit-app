@@ -51,7 +51,8 @@ def handle_audit_reformat(uploaded_file):
     output = BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     workbook.set_calc_mode('auto')
-    workbook.set_calc_on_load()
+    if hasattr(workbook, "set_calc_on_load"):
+        workbook.set_calc_on_load()
 
     worksheet = workbook.add_worksheet("Sentences")
     #print("A")

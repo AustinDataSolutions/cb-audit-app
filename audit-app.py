@@ -355,7 +355,7 @@ def main():
         help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
     )
 
-    with st.expander("Advanced"):
+    with st.expander("Audit settings"):
         llm_provider_options = ["anthropic", "openai"]
         default_provider = app_defaults["llm_provider"]
         provider_index = (
@@ -495,7 +495,33 @@ def main():
     for warning in audit_warnings:
         st.warning(warning)
 
+    summary_prompt_default = _load_summary_prompt(prompts_path)
+
+    generate_summary = st.checkbox(
+        "Generate audit summary",
+        value=True,
+        key="generate_audit_summary",
+    )
+    if not generate_summary:
+        st.session_state["summary_generation_pending"] = False
+
+    if generate_summary:
+        with st.expander("Summary settings"):
+            st.write(
+                "Generate a summary of the audit findings by having an LLM review the notes "
+                "of all sentences found to be incorrectly categorized."
+            )
+            st.text_area(
+                label="Instructions:",
+                value=summary_prompt_default,
+                max_chars=3000,
+                placeholder="Tell the LLM how to summarize audit findings...",
+                help="Sentences are batched by category.",
+                key="summary_prompt",
+            )
+
     if st.button("Run audit", type="primary", disabled=not can_run_audit, help=run_help):
+        st.session_state["summary_generation_pending"] = False
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
 
         if not audit_bytes:
@@ -552,6 +578,7 @@ def main():
                 progress_bar.empty()
             st.session_state["audit_output_bytes"] = output_bytes
             st.session_state.pop("audit_summary_bytes", None)
+            st.session_state["summary_generation_pending"] = generate_summary
             st.success("Audit complete.")
         except Exception as exc:
             st.error(f"Audit failed: {exc}")
@@ -565,18 +592,7 @@ def main():
             file_name=completed_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-    st.subheader("Generate Audit Summary")
-    st.write("Generate a summary of the audit findings by having an LLM review the notes of all sentences found to be incorrectly categorized.")
-    summary_prompt_default = _load_summary_prompt(prompts_path)
-    summary_prompt = st.text_area(
-        label="Instructions:",
-        value=summary_prompt_default,
-        max_chars=3000,
-        placeholder="Tell the LLM how to summarize audit findings...",
-        help="Sentences are batched by category.",
-        key="summary_prompt",
-    )
+    summary_prompt = st.session_state.get("summary_prompt", summary_prompt_default)
 
     summary_missing_reasons = []
     if not audit_output_bytes:
@@ -595,7 +611,7 @@ def main():
         else "; ".join(summary_missing_reasons)
     )
 
-    if st.button("Run summary", type="primary", disabled=not can_run_summary, help=summary_help):
+    if st.session_state.get("summary_generation_pending") and can_run_summary:
         progress_text = None
         progress_bar = None
         try:
@@ -632,10 +648,13 @@ def main():
         except Exception as exc:
             st.error(f"Audit summary failed: {exc}")
         finally:
+            st.session_state["summary_generation_pending"] = False
             if progress_text is not None:
                 progress_text.empty()
             if progress_bar is not None:
                 progress_bar.empty()
+    elif st.session_state.get("summary_generation_pending") and summary_help:
+        st.warning(f"Audit summary pending: {summary_help}")
 
     audit_summary_bytes = st.session_state.get("audit_summary_bytes")
     if audit_summary_bytes:
