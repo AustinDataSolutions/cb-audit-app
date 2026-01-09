@@ -50,6 +50,8 @@ def handle_audit_reformat(uploaded_file):
 
     output = BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    workbook.set_calc_mode('auto')
+    workbook.set_calc_on_load()
 
     worksheet = workbook.add_worksheet("Sentences")
     #print("A")
@@ -168,9 +170,9 @@ def handle_audit_reformat(uploaded_file):
             if col_num not in (2, 4):
                 worksheet.write(row_num, col_num, cell)
             elif col_num==2:
-                worksheet.write(row_num, col_num, "=IF(COUNTIF(Sentences!G:G, D"+str(row_num+1)+")=0, 1, SUMIF(Sentences!G:G, D"+str(row_num+1)+", Sentences!F:F)/COUNTIF(Sentences!G:G, D"+str(row_num+1)+" ))", percentage)
+                worksheet.write(row_num, col_num, "=IF(COUNTIF(Sentences!C:C, B"+str(row_num+1)+")=0, 1, SUMIF(Sentences!C:C, B"+str(row_num+1)+", Sentences!F:F)/COUNTIF(Sentences!C:C, B"+str(row_num+1)+" ))", percentage)
             elif col_num==4:
-                worksheet.write(row_num, col_num, "=IF(COUNTIF(Sentences!G:G, D"+str(row_num+1)+")=0, 1, SUMIF(Sentences!G:G, D"+str(row_num+1)+", Sentences!K:K)/COUNTIF(Sentences!G:G, D"+str(row_num+1)+" ))", percentage)
+                worksheet.write(row_num, col_num, "=IF(COUNTIF(Sentences!C:C, B"+str(row_num+1)+")=0, 1, SUMIF(Sentences!C:C, B"+str(row_num+1)+", Sentences!K:K)/COUNTIF(Sentences!C:C, B"+str(row_num+1)+" ))", percentage)
             col_num += 1
         row_num += 1
 
