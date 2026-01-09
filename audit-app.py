@@ -105,10 +105,16 @@ def _get_audit_stats(audit_bytes):
         category_sentences.setdefault(category_name, set()).add(sentence_id)
 
     category_counts = {cat: len(ids) for cat, ids in category_sentences.items()}
+    top_level_categories = set()
+    for category in category_counts:
+        parts = [part.strip() for part in str(category).split("-->") if part.strip()]
+        if parts:
+            top_level_categories.add(_topic_key(parts[0]))
     return {
         "category_counts": category_counts,
         "total_categories": len(category_counts),
         "max_sentences_per_category": max(category_counts.values(), default=0),
+        "top_level_categories": top_level_categories,
     }
 
 def _build_completed_filename(uploaded_file):
@@ -299,6 +305,27 @@ def main():
             st.error("Model data is missing. Please re-upload the XML file.")
             return
         
+        if uploaded_audit:
+            try:
+                audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
+                if not audit_bytes_for_stats:
+                    audit_bytes_for_stats = uploaded_audit.getvalue()
+                stats = _get_audit_stats(audit_bytes_for_stats)
+                tree_nodes = model_data.get("tree_nodes", [])
+                model_top_levels = {
+                    _topic_key(node.get("label", ""))
+                    for node in tree_nodes
+                    if node.get("label")
+                }
+                audit_top_levels = stats.get("top_level_categories", set())
+                if model_top_levels and audit_top_levels:
+                    if model_top_levels != audit_top_levels:
+                        st.warning(
+                            "Category names in XML tree do not align with audit file; check that correct files were selected."
+                        )
+            except Exception:
+                pass
+
         st.write("Select nodes to be audited:")
         if model_data.get("model_name"):
             st.caption(f"{model_data['model_name']}")
@@ -457,10 +484,11 @@ def main():
                 if estimated_output_tokens >= int(max_tokens):
                     audit_warnings.append(
                         "LLM response likely to be truncated for some categories based on "
-                        f"max tokens per request limit of {int(max_tokens)}. "
-                        f"(Response estimated at {estimated_tokens_per_sentence} tokens per sentence; "
-                        f"input file contains up to {max_sentences_in_category} sentences per category)."
+                        f"max tokens per request limit of {int(max_tokens)} "
+                        f"(response estimated at {estimated_tokens_per_sentence} tokens per sentence; "
+                        f"input file contains up to {max_sentences_in_category} sentences)."
                     )
+
         except Exception as exc:
             audit_warnings.append(f"Unable to estimate audit limits: {exc}")
 
