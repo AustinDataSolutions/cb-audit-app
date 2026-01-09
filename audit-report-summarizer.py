@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 from io import BytesIO
 import os
 import re
 
 import anthropic
 from dotenv import load_dotenv
-from openpyxl import Workbook
+from openpyxl import load_workbook
 import pandas as pd
 import yaml
 
@@ -22,26 +21,6 @@ DEFAULT_MODEL = "claude-sonnet-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
-
-
-def _build_completed_filename(input_name):
-    base, ext = os.path.splitext(input_name)
-    for suffix in ("_sortable", "_completed"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
-    if not ext:
-        ext = ".xlsx"
-    return f"{base}_completed{ext}"
-
-
-def _build_summary_filename(input_name):
-    base, ext = os.path.splitext(input_name)
-    for suffix in ("_sortable", "_completed", "_summary"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
-    if not ext:
-        ext = ".xlsx"
-    return f"{base}_summary{ext}"
 
 
 def _load_prompts(prompts_path):
@@ -119,6 +98,37 @@ def _build_audit_findings(df):
     return audit_findings
 
 
+def _normalize_topic(value):
+    text = str(value).strip()
+    return " ".join(text.split())
+
+
+def _topic_key(value):
+    text = _normalize_topic(value)
+    parts = [part.strip() for part in re.split(r"\s*-->\s*", text) if part.strip()]
+    normalized = "-->".join(parts) if parts else text
+    return normalized.casefold()
+
+
+def _get_sentences_sheet_name(sheet_names):
+    for name in sheet_names:
+        if name.casefold() == "sentences":
+            return name
+    if not sheet_names:
+        raise ValueError("Audit file has no worksheets.")
+    return sheet_names[0]
+
+
+def _get_topics_sheet_name(sheet_names):
+    for name in sheet_names:
+        if name.casefold() == "topics":
+            return name
+    for name in sheet_names:
+        if name.casefold() == "categories":
+            return name
+    raise ValueError("Audit file does not include a Topics worksheet.")
+
+
 def _parse_llm_summary(response_text, log_fn):
     pattern = r"SUMMARY:\s*(.+)"
     matches = re.findall(pattern, response_text, re.IGNORECASE | re.DOTALL)
@@ -163,19 +173,18 @@ def summarize_audit_report(
         msg_template = prompts.get("summary_prompt", "")
 
     audit_bytes = _coerce_audit_bytes(audit_excel_input)
-    df = pd.read_excel(BytesIO(audit_bytes))
+    excel_file = pd.ExcelFile(BytesIO(audit_bytes))
+    sentences_sheet = _get_sentences_sheet_name(excel_file.sheet_names)
+    df = pd.read_excel(excel_file, sheet_name=sentences_sheet)
     audit_findings = _build_audit_findings(df)
 
-    client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
     if model_name is None:
         model_name = DEFAULT_MODEL if llm_provider == "anthropic" else DEFAULT_OPENAI_MODEL
 
-    wb = Workbook()
-    ws = wb.active
-    ws.append(["Category", "Accuracy", "Issues"])
-
     total_categories = len(audit_findings)
     categories_checked = 1
+    issues_by_key = {}
+    client = None
     for category, findings in audit_findings.items():
         if progress_fn:
             progress_fn(categories_checked, total_categories, category)
@@ -194,6 +203,8 @@ def summarize_audit_report(
         # log_fn(f"Detected {wrong_count} explanations out of {sent_count} sentences audited ({round(accuracy * 100)}% accuracy)")
 
         if accuracy < accuracy_threshold:
+            if client is None:
+                client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
             message_content = msg_template.format(
                 category=category,
                 inaccurate_sent_explanations=inaccurate_sent_explanations,
@@ -221,11 +232,72 @@ def summarize_audit_report(
             else:
                 raise ValueError("llm_provider must be 'anthropic' or 'openai'")
             summary = _parse_llm_summary(response_text, warn_fn)
-            ws.append([category, accuracy, summary])
+            issues_by_key[_topic_key(category)] = summary
         else:
-            ws.append([category, accuracy, ""])
+            issues_by_key[_topic_key(category)] = ""
 
         categories_checked += 1
+
+    wb = load_workbook(BytesIO(audit_bytes))
+    topics_sheet_name = _get_topics_sheet_name(wb.sheetnames)
+    ws = wb[topics_sheet_name]
+    header_cells = list(ws[1])
+    headers = []
+    for cell in header_cells:
+        if cell.value is None:
+            headers.append("")
+        elif isinstance(cell.value, str):
+            headers.append(cell.value.strip().casefold())
+        else:
+            headers.append(str(cell.value).strip().casefold())
+    try:
+        topic_col = headers.index("topic") + 1
+    except ValueError as exc:
+        wb.close()
+        raise ValueError("Topics worksheet must include a 'Topic' column.") from exc
+
+    issues_col = None
+    if "issues" in headers:
+        issues_col = headers.index("issues") + 1
+    else:
+        issues_col = len(headers) + 1
+        ws.cell(row=1, column=issues_col, value="Issues")
+
+    unmatched_topics = []
+    used_keys = set()
+    for row_idx in range(2, ws.max_row + 1):
+        topic_value = ws.cell(row=row_idx, column=topic_col).value
+        if topic_value is None:
+            continue
+        topic_text = str(topic_value).strip()
+        if not topic_text:
+            continue
+        if topic_text.casefold() == "model average":
+            continue
+        topic_key = _topic_key(topic_text)
+        if topic_key in issues_by_key:
+            ws.cell(row=row_idx, column=issues_col, value=issues_by_key[topic_key])
+            used_keys.add(topic_key)
+        else:
+            unmatched_topics.append(topic_text)
+
+    missing_topics = [
+        category for category_key, category in (
+            (_topic_key(name), name) for name in audit_findings.keys()
+        )
+        if category_key not in used_keys
+    ]
+    if warn_fn:
+        if unmatched_topics:
+            warn_fn(
+                "Summary topics not found in Topics worksheet:\n"
+                + "\n".join(f"- {topic}" for topic in sorted(set(unmatched_topics)))
+            )
+        if missing_topics:
+            warn_fn(
+                "Audit categories missing from Topics worksheet:\n"
+                + "\n".join(f"- {topic}" for topic in sorted(set(missing_topics)))
+            )
 
     output = BytesIO()
     wb.save(output)
@@ -243,20 +315,10 @@ def summarize_audit_report(
     return output_bytes
 
 
-def _resolve_output_path(outputs_dir, input_path=None):
-    if input_path:
-        input_name = os.path.basename(input_path)
-        output_filename = _build_summary_filename(input_name)
-    else:
-        timestamp = datetime.now().strftime("%y%m%d%H%M")
-        output_filename = f"audit_summary_{timestamp}.xlsx"
-    return os.path.join(outputs_dir, output_filename)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Summarize a completed audit report.")
     parser.add_argument("--input", dest="input_path", help="Path to the completed audit .xlsx file")
-    parser.add_argument("--output", dest="output_path", help="Path to write the summary .xlsx file")
+    parser.add_argument("--output", dest="output_path", help="Path to write the updated audit .xlsx file")
     parser.add_argument("--prompts", dest="prompts_path", help="Path to prompts.yaml")
     parser.add_argument("--config", dest="config_path", help="Path to config.yaml")
     parser.add_argument("--api-key", dest="api_key", help="Anthropic API key override")
@@ -274,8 +336,7 @@ def main():
             raise ValueError("No input path provided and cli_summary.audit_file is missing in config.yaml")
         input_path = os.path.join(script_dir, "inputs", audit_file_name)
 
-    outputs_dir = os.path.join(script_dir, "outputs")
-    output_path = args.output_path or _resolve_output_path(outputs_dir, input_path)
+    output_path = args.output_path or input_path
 
     def _log(msg):
         print(msg)

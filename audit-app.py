@@ -127,16 +127,6 @@ def _build_completed_filename(uploaded_file):
     return f"{base}_completed{ext}"
 
 
-def _build_summary_filename(uploaded_file):
-    original_name = getattr(uploaded_file, "name", "") or "audit_summary.xlsx"
-    base, ext = os.path.splitext(original_name)
-    for suffix in ("_sortable", "_completed", "_summary"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
-    if not ext:
-        ext = ".xlsx"
-    return f"{base}_summary{ext}"
-
 #This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
 #It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
 #then will present the user an interface to allow them to select what part of the model they want audited,
@@ -577,21 +567,12 @@ def main():
                 progress_text.empty()
                 progress_bar.empty()
             st.session_state["audit_output_bytes"] = output_bytes
-            st.session_state.pop("audit_summary_bytes", None)
             st.session_state["summary_generation_pending"] = generate_summary
             st.success("Audit complete.")
         except Exception as exc:
             st.error(f"Audit failed: {exc}")
 
     audit_output_bytes = st.session_state.get("audit_output_bytes")
-    if audit_output_bytes:
-        completed_filename = _build_completed_filename(uploaded_audit)
-        st.download_button(
-            label="Download completed audit (.xlsx)",
-            data=audit_output_bytes,
-            file_name=completed_filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
     summary_prompt = st.session_state.get("summary_prompt", summary_prompt_default)
 
     summary_missing_reasons = []
@@ -643,7 +624,7 @@ def main():
                     progress_fn=_update_summary_progress,
                 )
                 progress_bar.progress(1.0)
-            st.session_state["audit_summary_bytes"] = summary_bytes
+            st.session_state["audit_output_bytes"] = summary_bytes
             st.success("Audit summary complete.")
         except Exception as exc:
             st.error(f"Audit summary failed: {exc}")
@@ -656,12 +637,14 @@ def main():
     elif st.session_state.get("summary_generation_pending") and summary_help:
         st.warning(f"Audit summary pending: {summary_help}")
 
-    audit_summary_bytes = st.session_state.get("audit_summary_bytes")
-    if audit_summary_bytes:
+    audit_output_bytes = st.session_state.get("audit_output_bytes")
+    summary_pending = st.session_state.get("summary_generation_pending")
+    if audit_output_bytes and not summary_pending:
+        completed_filename = _build_completed_filename(uploaded_audit)
         st.download_button(
-            label="Download audit summary (.xlsx)",
-            data=audit_summary_bytes,
-            file_name=_build_summary_filename(uploaded_audit),
+            label="Download completed audit (.xlsx)",
+            data=audit_output_bytes,
+            file_name=completed_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
