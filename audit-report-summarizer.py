@@ -212,6 +212,7 @@ def summarize_audit_report(
             elif llm_provider == "openai":
                 response = client.chat.completions.create(
                     model=model_name,
+                    max_tokens=max_tokens,
                     messages=[
                         {"role": "user", "content": message_content}
                     ]

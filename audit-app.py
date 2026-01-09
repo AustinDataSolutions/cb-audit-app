@@ -1,11 +1,15 @@
 import os
 import importlib.util
+import re
+from io import BytesIO
 import streamlit as st
 import xml.etree.ElementTree as ET
+import pandas as pd
 from streamlit_tree_select import tree_select
 import yaml
 
 from audit_reformat import handle_audit_reformat
+from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit
 
 
@@ -57,6 +61,55 @@ def _load_summarizer_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _normalize_topic(value):
+    text = str(value).strip()
+    return " ".join(text.split())
+
+
+def _topic_key(value):
+    text = _normalize_topic(value)
+    parts = [part.strip() for part in re.split(r"\s*-->\s*", text) if part.strip()]
+    normalized = "-->".join(parts) if parts else text
+    return normalized.casefold()
+
+
+def _get_audit_stats(audit_bytes):
+    sentences_sheet, header_row_idx, _, _ = validate_audit_sentences_sheet(audit_bytes)
+    df = pd.read_excel(
+        BytesIO(audit_bytes),
+        sheet_name=sentences_sheet,
+        header=header_row_idx,
+    )
+    if df.empty or len(df.columns) < 3:
+        return {
+            "category_counts": {},
+            "total_categories": 0,
+            "max_sentences_per_category": 0,
+        }
+
+    id_col = df.columns[0]
+    sentence_col = df.columns[1]
+    category_col = df.columns[2]
+    category_sentences = {}
+    for _, row in df.iterrows():
+        category = row[category_col]
+        sentence_id = row[id_col]
+        sentence = row[sentence_col]
+        if pd.isna(category) or pd.isna(sentence_id) or pd.isna(sentence):
+            continue
+        category_name = str(category).strip()
+        if not category_name:
+            continue
+        category_sentences.setdefault(category_name, set()).add(sentence_id)
+
+    category_counts = {cat: len(ids) for cat, ids in category_sentences.items()}
+    return {
+        "category_counts": category_counts,
+        "total_categories": len(category_counts),
+        "max_sentences_per_category": max(category_counts.values(), default=0),
+    }
 
 def _build_completed_filename(uploaded_file):
     original_name = getattr(uploaded_file, "name", "") or "completed_audit.xlsx"
@@ -358,6 +411,61 @@ def main():
         if can_run_audit
         else "; ".join(missing_reasons)
     )
+
+    audit_warnings = []
+    if uploaded_audit:
+        try:
+            audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
+            if not audit_bytes_for_stats:
+                audit_bytes_for_stats = uploaded_audit.getvalue()
+            stats = _get_audit_stats(audit_bytes_for_stats)
+            category_counts = stats["category_counts"]
+            category_names = list(category_counts.keys())
+            selected_topics = st.session_state.get("topics_to_audit")
+            if selected_topics:
+                categories_by_key = {_topic_key(cat): cat for cat in category_names}
+                filtered = []
+                seen = set()
+                for topic in selected_topics:
+                    match = categories_by_key.get(_topic_key(topic))
+                    if match and match not in seen:
+                        filtered.append(match)
+                        seen.add(match)
+                categories_to_audit = filtered or category_names
+            else:
+                categories_to_audit = category_names
+
+            total_categories = len(categories_to_audit)
+            if total_categories and int(max_categories) < total_categories:
+                audit_warnings.append(
+                    f"Max categories to audit is {int(max_categories)}, but the input has {total_categories} categories to audit."
+                )
+
+            if categories_to_audit:
+                max_sentences_in_category = max(
+                    category_counts[cat] for cat in categories_to_audit
+                )
+                if int(max_sentences) < max_sentences_in_category:
+                    audit_warnings.append(
+                        "Max sentences per category is "
+                        f"{int(max_sentences)}, but the input has up to "
+                        f"{max_sentences_in_category} sentences in a category."
+                    )
+
+                estimated_tokens_per_sentence = 30
+                estimated_output_tokens = max_sentences_in_category * estimated_tokens_per_sentence
+                if estimated_output_tokens >= int(max_tokens):
+                    audit_warnings.append(
+                        "LLM response likely to be truncated for some categories based on "
+                        f"max tokens per request limit of {int(max_tokens)}. "
+                        f"(Response estimated at {estimated_tokens_per_sentence} tokens per sentence; "
+                        f"input file contains up to {max_sentences_in_category} sentences per category)."
+                    )
+        except Exception as exc:
+            audit_warnings.append(f"Unable to estimate audit limits: {exc}")
+
+    for warning in audit_warnings:
+        st.warning(warning)
 
     if st.button("Run audit", type="primary", disabled=not can_run_audit, help=run_help):
         audit_bytes = st.session_state.get("reformatted_audit_bytes")

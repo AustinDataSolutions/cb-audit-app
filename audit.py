@@ -287,6 +287,7 @@ def run_audit(
         elif llm_provider == 'openai':
             response = client.chat.completions.create(
                 model=model_name,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
                 ]
@@ -489,6 +490,7 @@ def run_audit_from_config():
         else:
             response = client.chat.completions.create(
                 model=model_name or DEFAULT_OPENAI_MODEL,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
                 ]
