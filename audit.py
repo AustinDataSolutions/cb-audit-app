@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 import pandas as pd
 import yaml
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import numbers
+from openpyxl.styles import numbers, Font, Alignment
+from openpyxl.utils import get_column_letter
 from audit_validation import validate_audit_sentences_sheet
 
 try:
@@ -25,12 +26,21 @@ DEFAULT_MAX_SENTENCES_PER_CATEGORY = 51
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
+COLUMN_WIDTH_PX = 300
+COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
+FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
+SENTENCES_HEADERS = ["Sentence", "Topic", "Audit", "Explanation"]
+FINDINGS_WRAP_COLUMNS = (1, 2, 4)
+SENTENCES_WRAP_COLUMNS = (1, 2, 4)
+HEADER_FONT = Font(bold=True)
+HEADER_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
+WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 
 
 def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
     sheet_ref = f"'{sentences_sheet_title}'"
-    category_col = f"{sheet_ref}!C:C"
-    judgment_col = f"{sheet_ref}!D:D"
+    category_col = f"{sheet_ref}!B:B"
+    judgment_col = f"{sheet_ref}!C:C"
     category_cell = "INDEX(A:A, ROW())"
     formula = (
         f"=IF(COUNTIF({category_col}, {category_cell})=0, 0, "
@@ -48,6 +58,98 @@ def _add_model_average_row(ws_categories):
     average_cell = ws_categories.cell(row=2, column=3)
     average_cell.value = f"=AVERAGE(C3:C{last_row})"
     average_cell.number_format = numbers.FORMAT_PERCENTAGE
+
+
+def _ensure_headers(ws, headers):
+    is_blank_header = (
+        ws.max_row <= 1
+        and all(
+            (ws.cell(row=1, column=idx).value in (None, ""))
+            for idx in range(1, len(headers) + 1)
+        )
+    )
+    if is_blank_header:
+        ws.delete_rows(1, ws.max_row)
+        ws.append(headers)
+    else:
+        for idx, header in enumerate(headers, start=1):
+            ws.cell(row=1, column=idx, value=header)
+
+
+def _apply_header_style(ws, header_len):
+    for col_idx in range(1, header_len + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = HEADER_FONT
+        cell.alignment = HEADER_ALIGNMENT
+
+
+def _apply_alignment_to_row(ws, row_idx, columns):
+    for col_idx in columns:
+        cell = ws.cell(row=row_idx, column=col_idx)
+        cell.alignment = WRAP_ALIGNMENT
+
+
+def _apply_alignment_to_columns(ws, columns):
+    if ws.max_row < 1:
+        return
+    for row_idx in range(1, ws.max_row + 1):
+        _apply_alignment_to_row(ws, row_idx, columns)
+
+
+def _set_column_widths(ws, columns):
+    for col_idx in columns:
+        ws.column_dimensions[get_column_letter(col_idx)].width = COLUMN_WIDTH_CHAR
+
+
+def _refresh_auto_filter(ws):
+    if ws.max_row >= 1 and ws.max_column >= 1:
+        ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+
+
+def _ensure_findings_sheet(wb):
+    if "Findings" in wb.sheetnames:
+        ws = wb["Findings"]
+    elif "Topics" in wb.sheetnames:
+        ws = wb["Topics"]
+        ws.title = "Findings"
+    else:
+        if wb.sheetnames:
+            default_ws = wb[wb.sheetnames[0]]
+            if default_ws.title == "Sentences":
+                ws = wb.create_sheet(title="Findings", index=0)
+            else:
+                default_ws.title = "Findings"
+                ws = default_ws
+        else:
+            ws = wb.create_sheet(title="Findings", index=0)
+
+    _ensure_headers(ws, FINDINGS_HEADERS)
+    _apply_header_style(ws, len(FINDINGS_HEADERS))
+    _set_column_widths(ws, FINDINGS_WRAP_COLUMNS)
+    _apply_alignment_to_columns(ws, FINDINGS_WRAP_COLUMNS)
+    ws.freeze_panes = "A2"
+    current_index = wb.sheetnames.index(ws.title)
+    if current_index != 0:
+        wb.move_sheet(ws, -current_index)
+    return ws
+
+
+def _ensure_sentences_sheet(wb):
+    if "Sentences" in wb.sheetnames:
+        ws = wb["Sentences"]
+    else:
+        ws = wb.create_sheet(title="Sentences")
+
+    header_value = ws.cell(row=1, column=1).value
+    if isinstance(header_value, str) and header_value.strip().casefold() == "sentence id":
+        ws.delete_cols(1)
+
+    _ensure_headers(ws, SENTENCES_HEADERS)
+    _apply_header_style(ws, len(SENTENCES_HEADERS))
+    _set_column_widths(ws, SENTENCES_WRAP_COLUMNS)
+    _apply_alignment_to_columns(ws, SENTENCES_WRAP_COLUMNS)
+    ws.freeze_panes = "A2"
+    return ws
 
 
 def _load_yaml(path):
@@ -238,12 +340,8 @@ def run_audit(
         model_name = DEFAULT_ANTHROPIC_MODEL if llm_provider == 'anthropic' else DEFAULT_OPENAI_MODEL
 
     wb = Workbook()
-    ws_findings = wb.active
-    ws_findings.title = "Findings"
-    ws_findings.append(["Topic", "Description", "Accuracy"])
-
-    ws_sentences = wb.create_sheet(title="Sentences")
-    ws_sentences.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
+    ws_findings = _ensure_findings_sheet(wb)
+    ws_sentences = _ensure_sentences_sheet(wb)
 
     total_categories = min(len(categories_to_audit), max_categories)
     cat_count = 0
@@ -300,13 +398,19 @@ def run_audit(
 
         for sentence_id, sentence in sent_tuples:
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
-            ws_sentences.append([sentence_id, sentence, category, judgment, explanation])
+            ws_sentences.append([sentence, category, judgment, explanation])
+            _apply_alignment_to_row(ws_sentences, ws_sentences.max_row, SENTENCES_WRAP_COLUMNS)
 
-        ws_findings.append([category, description, ""])
+        ws_findings.append([category, description, "", ""])
+        _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
         _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
 
     if ws_findings.max_row > 1:
         _add_model_average_row(ws_findings)
+        _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
+
+    _refresh_auto_filter(ws_findings)
+    _refresh_auto_filter(ws_sentences)
 
     output = BytesIO()
     wb.save(output)
@@ -399,26 +503,8 @@ def run_audit_from_config():
     else:
         wb = Workbook()
 
-    if "Findings" in wb.sheetnames:
-        ws_findings = wb["Findings"]
-    elif "Topics" in wb.sheetnames:
-        ws_findings = wb["Topics"]
-        ws_findings.title = "Findings"
-    else:
-        ws_findings = wb.active
-        ws_findings.title = "Findings"
-    if ws_findings.max_row == 0:
-        ws_findings.append(["Topic", "Description", "Accuracy"])
-    findings_index = wb.sheetnames.index(ws_findings.title)
-    if findings_index != 0:
-        wb.move_sheet(ws_findings, -findings_index)
-
-    if "Sentences" in wb.sheetnames:
-        ws_sentences = wb["Sentences"]
-    else:
-        ws_sentences = wb.create_sheet(title="Sentences")
-    if ws_sentences.max_row == 0:
-        ws_sentences.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
+    ws_findings = _ensure_findings_sheet(wb)
+    ws_sentences = _ensure_sentences_sheet(wb)
 
     if resume_mode:
         existing_categories = [
@@ -433,7 +519,7 @@ def run_audit_from_config():
 
         if restart_category:
             for row_idx in range(ws_sentences.max_row, 1, -1):
-                if ws_sentences.cell(row=row_idx, column=3).value == restart_category:
+                if ws_sentences.cell(row=row_idx, column=2).value == restart_category:
                     ws_sentences.delete_rows(row_idx)
             for row_idx in range(ws_findings.max_row, 1, -1):
                 if ws_findings.cell(row=row_idx, column=1).value == restart_category:
@@ -502,15 +588,23 @@ def run_audit_from_config():
 
         for sentence_id, sentence in sent_tuples:
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
-            ws_sentences.append([sentence_id, sentence, category, judgment, explanation])
+            ws_sentences.append([sentence, category, judgment, explanation])
+            _apply_alignment_to_row(ws_sentences, ws_sentences.max_row, SENTENCES_WRAP_COLUMNS)
 
-        ws_findings.append([category, description, ""])
+        ws_findings.append([category, description, "", ""])
+        _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
         _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
+        _refresh_auto_filter(ws_findings)
+        _refresh_auto_filter(ws_sentences)
         wb.save(output_path)
 
     if ws_findings.max_row > 1:
         _add_model_average_row(ws_findings)
-        wb.save(output_path)
+        _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
+
+    _refresh_auto_filter(ws_findings)
+    _refresh_auto_filter(ws_sentences)
+    wb.save(output_path)
 
     wb.close()
     print("Script concluded")
