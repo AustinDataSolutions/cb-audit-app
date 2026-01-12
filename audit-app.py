@@ -376,10 +376,8 @@ def main():
     model_name = sidebar.text_input("Model", value=default_model)
     
     api_key = get_api_key(llm_provider.upper())
-    key_expander_open = False
-    if not api_key:
-        sidebar.error(f"{llm_provider} API key not found; enter key below")
-        key_expander_open = True
+    error_placeholder = sidebar.empty()
+    key_expander_open = not bool(api_key)
 
     anthropic_api_key = None
     openai_api_key = None
@@ -401,6 +399,16 @@ def main():
                 api_key = anthropic_api_key
             elif llm_provider == "openai" and openai_api_key:
                 api_key = openai_api_key
+
+    manual_key_present = False
+    if llm_provider == "anthropic":
+        manual_key_present = bool((anthropic_api_key or "").strip())
+    else:
+        manual_key_present = bool((openai_api_key or "").strip())
+    if not (api_key or manual_key_present):
+        error_placeholder.error(f"{llm_provider} API key not found; enter key below")
+    else:
+        error_placeholder.empty()
 
     sidebar.subheader("Audit parameters")
     max_categories = sidebar.number_input(
