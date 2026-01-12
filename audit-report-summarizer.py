@@ -74,23 +74,40 @@ def _coerce_audit_bytes(audit_excel_input):
 
 
 def _build_audit_findings(df):
-    if len(df.columns) < 5:
-        raise ValueError("Audit report must contain at least five columns.")
+    if len(df.columns) < 4:
+        raise ValueError("Audit report must contain at least four columns.")
 
-    id_col = df.columns[0]
-    sentence_col = df.columns[1]
-    category_col = df.columns[2]
-    judgment_col = df.columns[3]
-    explanation_col = df.columns[4]
+    has_id_column = len(df.columns) >= 5
+    if has_id_column:
+        id_col = df.columns[0]
+        sentence_col = df.columns[1]
+        category_col = df.columns[2]
+        judgment_col = df.columns[3]
+        explanation_col = df.columns[4]
+    else:
+        id_col = None
+        sentence_col = df.columns[0]
+        category_col = df.columns[1]
+        judgment_col = df.columns[2]
+        explanation_col = df.columns[3]
 
     audit_findings = {}
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         category = row[category_col]
-        sentence_id = row[id_col]
         sentence = row[sentence_col]
         judgment = row[judgment_col]
         explanation = row[explanation_col]
-        if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id) or pd.isna(judgment) or pd.isna(explanation):
+        if has_id_column:
+            sentence_id = row[id_col]
+        else:
+            sentence_id = f"row-{idx + 2}"
+        if (
+            pd.isna(category)
+            or pd.isna(sentence)
+            or (has_id_column and pd.isna(sentence_id))
+            or pd.isna(judgment)
+            or pd.isna(explanation)
+        ):
             continue
         if category not in audit_findings:
             audit_findings[category] = {}
@@ -121,12 +138,13 @@ def _get_sentences_sheet_name(sheet_names):
 
 def _get_topics_sheet_name(sheet_names):
     for name in sheet_names:
-        if name.casefold() == "topics":
+        lowered = name.casefold()
+        if lowered in ("findings", "topics"):
             return name
     for name in sheet_names:
         if name.casefold() == "categories":
             return name
-    raise ValueError("Audit file does not include a Topics worksheet.")
+    raise ValueError("Audit file does not include a Topics/Findings worksheet.")
 
 
 def _collect_summary_records(
@@ -183,7 +201,7 @@ def _collect_summary_records(
             elif llm_provider == "openai":
                 response = client.chat.completions.create(
                     model=model_name,
-                    max_tokens=max_tokens,
+                    max_completion_tokens=max_tokens,
                     messages=[
                         {"role": "user", "content": message_content}
                     ]
