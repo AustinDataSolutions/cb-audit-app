@@ -2,6 +2,7 @@ from io import BytesIO  # BytesIO simulates in-memory files without touching dis
 import importlib.util  # importlib loads modules dynamically by file path.
 import os
 
+from openpyxl import Workbook, load_workbook
 import pandas as pd
 
 
@@ -19,6 +20,24 @@ def _load_summarizer_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _build_sample_completed_audit():
+    wb = Workbook()
+    ws_sentences = wb.active
+    ws_sentences.title = "Sentences"
+    ws_sentences.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
+    ws_sentences.append([1, "Sentence", "Topic A", "YES", "Looks accurate"])
+
+    ws_topics = wb.create_sheet("Topics")
+    ws_topics.append(["Topic", "Description", "Accuracy"])
+    ws_topics.append(["Topic A", "Desc", 1])
+
+    output = BytesIO()
+    wb.save(output)
+    wb.close()
+    output.seek(0)
+    return output.getvalue()
 
 
 def test_coerce_audit_bytes_accepts_bytes():
@@ -85,3 +104,19 @@ def test_build_audit_findings_skips_missing_rows():
     assert 1 in findings["Category A"]
     assert 2 not in findings["Category A"]
     assert 3 in findings["Category B"]
+
+
+def test_summarize_audit_report_updates_topics_sheet():
+    summarizer = _load_summarizer_module()
+    workbook_bytes = _build_sample_completed_audit()
+    updated_bytes = summarizer.summarize_audit_report(
+        audit_excel_input=workbook_bytes,
+        msg_template="",
+        llm_provider="anthropic",
+        accuracy_threshold=0,  # Forces skip of LLM call for the test fixture.
+    )
+    wb = load_workbook(BytesIO(updated_bytes))
+    ws_topics = wb["Topics"]
+    headers = [cell.value for cell in ws_topics[1]]
+    assert "Issues" in headers
+    wb.close()

@@ -129,6 +129,85 @@ def _get_topics_sheet_name(sheet_names):
     raise ValueError("Audit file does not include a Topics worksheet.")
 
 
+def _collect_summary_records(
+    audit_findings,
+    llm_provider,
+    model_name,
+    max_tokens,
+    accuracy_threshold,
+    model_info,
+    msg_template,
+    anthropic_api_key,
+    openai_api_key,
+    progress_fn,
+    warn_fn,
+):
+    summary_records = []
+    issues_by_key = {}
+    total_categories = len(audit_findings)
+    categories_checked = 1
+    client = None
+
+    for category, findings in audit_findings.items():
+        if progress_fn:
+            progress_fn(categories_checked, total_categories, category)
+        inaccurate_sent_explanations = ""
+        sent_count = 0
+        wrong_count = 0
+
+        for _, (judgment, explanation) in findings.items():
+            sent_count += 1
+            if judgment == "NO":
+                wrong_count += 1
+                inaccurate_sent_explanations += f"{explanation}\n"
+
+        accuracy = round(((sent_count - wrong_count) / sent_count), 2) if sent_count else 0
+        summary_text = ""
+        if accuracy < accuracy_threshold:
+            if client is None:
+                client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
+            message_content = msg_template.format(
+                category=category,
+                inaccurate_sent_explanations=inaccurate_sent_explanations,
+                model_info=model_info or "",
+            )
+            if llm_provider == "anthropic":
+                message = client.messages.create(
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = message.content[0].text
+            elif llm_provider == "openai":
+                response = client.chat.completions.create(
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = response.choices[0].message.content
+            else:
+                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+            summary_text = _parse_llm_summary(response_text, warn_fn)
+
+        category_key = _topic_key(category)
+        summary_records.append(
+            {
+                "category": category,
+                "category_key": category_key,
+                "accuracy": accuracy,
+                "issues": summary_text,
+            }
+        )
+        issues_by_key[category_key] = summary_text
+        categories_checked += 1
+
+    return summary_records, issues_by_key
+
+
 def _parse_llm_summary(response_text, log_fn):
     pattern = r"SUMMARY:\s*(.+)"
     matches = re.findall(pattern, response_text, re.IGNORECASE | re.DOTALL)
@@ -181,62 +260,19 @@ def summarize_audit_report(
     if model_name is None:
         model_name = DEFAULT_MODEL if llm_provider == "anthropic" else DEFAULT_OPENAI_MODEL
 
-    total_categories = len(audit_findings)
-    categories_checked = 1
-    issues_by_key = {}
-    client = None
-    for category, findings in audit_findings.items():
-        if progress_fn:
-            progress_fn(categories_checked, total_categories, category)
-        # log_fn(f"Reviewing audit findings for category '{category}' ({categories_checked} of {total_categories})...")
-        inaccurate_sent_explanations = ""
-        sent_count = 0
-        wrong_count = 0
-
-        for _, (judgment, explanation) in findings.items():
-            sent_count += 1
-            if judgment == "NO":
-                wrong_count += 1
-                inaccurate_sent_explanations += f"{explanation}\n"
-
-        accuracy = round(((sent_count - wrong_count) / sent_count), 2) if sent_count else 0
-        # log_fn(f"Detected {wrong_count} explanations out of {sent_count} sentences audited ({round(accuracy * 100)}% accuracy)")
-
-        if accuracy < accuracy_threshold:
-            if client is None:
-                client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
-            message_content = msg_template.format(
-                category=category,
-                inaccurate_sent_explanations=inaccurate_sent_explanations,
-                model_info=model_info or "",
-            )
-            # log_fn("Sending explanations to LLM for summarization...")
-            if llm_provider == "anthropic":
-                message = client.messages.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = message.content[0].text
-            elif llm_provider == "openai":
-                response = client.chat.completions.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = response.choices[0].message.content
-            else:
-                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
-            summary = _parse_llm_summary(response_text, warn_fn)
-            issues_by_key[_topic_key(category)] = summary
-        else:
-            issues_by_key[_topic_key(category)] = ""
-
-        categories_checked += 1
+    summary_records, issues_by_key = _collect_summary_records(
+        audit_findings=audit_findings,
+        llm_provider=llm_provider,
+        model_name=model_name,
+        max_tokens=max_tokens,
+        accuracy_threshold=accuracy_threshold,
+        model_info=model_info,
+        msg_template=msg_template,
+        anthropic_api_key=anthropic_api_key,
+        openai_api_key=openai_api_key,
+        progress_fn=progress_fn,
+        warn_fn=warn_fn,
+    )
 
     wb = load_workbook(BytesIO(audit_bytes))
     topics_sheet_name = _get_topics_sheet_name(wb.sheetnames)
