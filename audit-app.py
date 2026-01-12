@@ -335,8 +335,8 @@ def main():
         )
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
-    st.subheader("Set Prompts")
-    st.write("Provide the LLM with a description of the model you're auditing, and instructions for how to carry out the audit.")
+    st.subheader("Add context")
+    st.write("Write a short description of the model you're auditing so that the LLM understands what it's trying to capture.")
     model_info = st.text_area(
         "About this model: (optional)", 
         max_chars=1000, 
@@ -345,13 +345,14 @@ def main():
         placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform that awards points for educational and entertainment activities."
         )
 
-    audit_prompt = st.text_area(
-        label="Task instructions:",
-        value=audit_defaults["audit_prompt"],
-        max_chars=2500,
-        placeholder="Tell the LLM what to do...",
-        help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
-    )
+    with st.expander("Audit prompt"):
+        audit_prompt = st.text_area(
+            label="Task instructions:",
+            value=audit_defaults["audit_prompt"],
+            max_chars=2500,
+            placeholder="Tell the LLM what to do...",
+            help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
+        )
 
     sidebar = st.sidebar
     sidebar.subheader("API Settings")
@@ -509,12 +510,13 @@ def main():
         "Generate audit summary",
         value=True,
         key="generate_audit_summary",
+        help="Generates a note summarizing the issues for each topic that failed the audit"
     )
     if not generate_summary:
         st.session_state["summary_generation_pending"] = False
 
     if generate_summary:
-        with st.expander("Summary settings"):
+        with st.expander("Summary prompt"):
             st.write(
                 "Generate a summary of the audit findings by having an LLM review the notes "
                 "of all sentences found to be incorrectly categorized."
