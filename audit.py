@@ -238,12 +238,12 @@ def run_audit(
         model_name = DEFAULT_ANTHROPIC_MODEL if llm_provider == 'anthropic' else DEFAULT_OPENAI_MODEL
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Sentences"
-    ws.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
+    ws_findings = wb.active
+    ws_findings.title = "Findings"
+    ws_findings.append(["Topic", "Description", "Accuracy"])
 
-    ws_categories = wb.create_sheet(title="Topics")
-    ws_categories.append(["Topic", "Description", "Accuracy"])
+    ws_sentences = wb.create_sheet(title="Sentences")
+    ws_sentences.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
 
     total_categories = min(len(categories_to_audit), max_categories)
     cat_count = 0
@@ -300,13 +300,13 @@ def run_audit(
 
         for sentence_id, sentence in sent_tuples:
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
-            ws.append([sentence_id, sentence, category, judgment, explanation])
+            ws_sentences.append([sentence_id, sentence, category, judgment, explanation])
 
-        ws_categories.append([category, description, ""])
-        _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
+        ws_findings.append([category, description, ""])
+        _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
 
-    if ws_categories.max_row > 1:
-        _add_model_average_row(ws_categories)
+    if ws_findings.max_row > 1:
+        _add_model_average_row(ws_findings)
 
     output = BytesIO()
     wb.save(output)
@@ -396,36 +396,34 @@ def run_audit_from_config():
 
     if resume_mode:
         wb = load_workbook(output_path)
-        if "Sentences" in wb.sheetnames:
-            ws = wb["Sentences"]
-        else:
-            ws = wb.active
-            if ws.title == "Topics":
-                for sheet_name in wb.sheetnames:
-                    if sheet_name != "Topics":
-                        ws = wb[sheet_name]
-                        break
-            if ws.title != "Sentences":
-                ws.title = "Sentences"
     else:
         wb = Workbook()
-        ws = wb.active
-        ws.title = "Sentences"
-        ws.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
 
-    if "Topics" in wb.sheetnames:
-        ws_categories = wb["Topics"]
-    elif "categories" in wb.sheetnames:
-        ws_categories = wb["categories"]
-        ws_categories.title = "Topics"
+    if "Findings" in wb.sheetnames:
+        ws_findings = wb["Findings"]
+    elif "Topics" in wb.sheetnames:
+        ws_findings = wb["Topics"]
+        ws_findings.title = "Findings"
     else:
-        ws_categories = wb.create_sheet(title="Topics")
-        ws_categories.append(["Topic", "Description", "Accuracy"])
+        ws_findings = wb.active
+        ws_findings.title = "Findings"
+    if ws_findings.max_row == 0:
+        ws_findings.append(["Topic", "Description", "Accuracy"])
+    findings_index = wb.sheetnames.index(ws_findings.title)
+    if findings_index != 0:
+        wb.move_sheet(ws_findings, -findings_index)
+
+    if "Sentences" in wb.sheetnames:
+        ws_sentences = wb["Sentences"]
+    else:
+        ws_sentences = wb.create_sheet(title="Sentences")
+    if ws_sentences.max_row == 0:
+        ws_sentences.append(["Sentence ID", "Sentence", "Topic", "Audit", "Explanation"])
 
     if resume_mode:
         existing_categories = [
             row[0]
-            for row in ws_categories.iter_rows(min_row=2, min_col=1, max_col=1, values_only=True)
+            for row in ws_findings.iter_rows(min_row=2, min_col=1, max_col=1, values_only=True)
             if row[0]
         ]
         if existing_categories:
@@ -434,12 +432,12 @@ def run_audit_from_config():
             print(f"Last completed category recorded as '{restart_category}'. Re-auditing it before continuing.")
 
         if restart_category:
-            for row_idx in range(ws.max_row, 1, -1):
-                if ws.cell(row=row_idx, column=3).value == restart_category:
-                    ws.delete_rows(row_idx)
-            for row_idx in range(ws_categories.max_row, 1, -1):
-                if ws_categories.cell(row=row_idx, column=1).value == restart_category:
-                    ws_categories.delete_rows(row_idx)
+            for row_idx in range(ws_sentences.max_row, 1, -1):
+                if ws_sentences.cell(row=row_idx, column=3).value == restart_category:
+                    ws_sentences.delete_rows(row_idx)
+            for row_idx in range(ws_findings.max_row, 1, -1):
+                if ws_findings.cell(row=row_idx, column=1).value == restart_category:
+                    ws_findings.delete_rows(row_idx)
 
     categories_to_audit = []
     if restart_category:
@@ -504,14 +502,14 @@ def run_audit_from_config():
 
         for sentence_id, sentence in sent_tuples:
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
-            ws.append([sentence_id, sentence, category, judgment, explanation])
+            ws_sentences.append([sentence_id, sentence, category, judgment, explanation])
 
-        ws_categories.append([category, description, ""])
-        _apply_precision_formula(ws_categories, ws_categories.max_row, ws.title)
+        ws_findings.append([category, description, ""])
+        _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
         wb.save(output_path)
 
-    if ws_categories.max_row > 1:
-        _add_model_average_row(ws_categories)
+    if ws_findings.max_row > 1:
+        _add_model_average_row(ws_findings)
         wb.save(output_path)
 
     wb.close()
