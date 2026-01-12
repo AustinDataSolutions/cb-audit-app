@@ -219,9 +219,17 @@ def _parse_model_xml(xml_bytes):
 
 def get_api_key(provider="ANTHROPIC"):
     api_var = provider + "_API_KEY"
-    # Looks for secret in secrets.toml
-    if api_var in st.secrets:
-        return st.secrets[api_var]
+    try:
+        secrets = st.secrets
+    except Exception:
+        return None
+
+    try:
+        if api_var in secrets:
+            return secrets[api_var]
+    except Exception:
+        return None
+
     return None
 
 def main():
@@ -417,7 +425,7 @@ def main():
         missing_reasons.append("Upload an audit file")
     if llm_provider == "anthropic":
         if not (api_key or anthropic_api_key):
-            missing_reasons.append("Provide an Anthropic API key")
+            missing_reasons.append("Provide an API key to access LLM audit functionality")
     elif llm_provider == "openai":
         if not (api_key or openai_api_key):
             missing_reasons.append("Provide an OpenAI API key")
