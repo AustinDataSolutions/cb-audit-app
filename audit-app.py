@@ -335,7 +335,7 @@ def main():
         )
         st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
-    st.subheader("Audit settings")
+    st.subheader("Set Prompts")
     st.write("Provide the LLM with a description of the model you're auditing, and instructions for how to carry out the audit.")
     model_info = st.text_area(
         "About this model: (optional)", 
@@ -353,72 +353,74 @@ def main():
         help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
     )
 
-    with st.expander("Audit settings"):
-        llm_provider_options = ["anthropic", "openai"]
-        default_provider = app_defaults["llm_provider"]
-        provider_index = (
-            llm_provider_options.index(default_provider)
-            if default_provider in llm_provider_options
-            else 0
-        )
-        llm_provider = st.selectbox(
-            "LLM provider",
-            options=llm_provider_options,
-            index=provider_index,
-        )
+    sidebar = st.sidebar
+    sidebar.subheader("API Settings")
+    llm_provider_options = ["anthropic", "openai"]
+    default_provider = app_defaults["llm_provider"]
+    provider_index = (
+        llm_provider_options.index(default_provider)
+        if default_provider in llm_provider_options
+        else 0
+    )
+    llm_provider = sidebar.selectbox(
+        "LLM provider",
+        options=llm_provider_options,
+        index=provider_index,
+    )
 
-        default_model = (
-            app_defaults["model_name_anthropic"]
-            if llm_provider == "anthropic"
-            else app_defaults["model_name_openai"]
-        )
-        model_name = st.text_input("Model name", value=default_model)
+    default_model = (
+        app_defaults["model_name_anthropic"]
+        if llm_provider == "anthropic"
+        else app_defaults["model_name_openai"]
+    )
+    model_name = sidebar.text_input("Model", value=default_model)
+    
+    api_key = get_api_key(llm_provider.upper())
+    key_expander_open = False
+    if not api_key:
+        sidebar.error(f"{llm_provider} API key not found; enter key below")
+        key_expander_open = True
 
-        max_categories = st.number_input(
-            "Max categories to audit",
-            min_value=1,
-            value=int(app_defaults["max_categories"]),
-            step=1,
-        )
-        max_sentences = st.number_input(
-            "Max sentences per category",
-            min_value=1,
-            value=int(app_defaults["max_sentences_per_category"]),
-            step=1,
-        )
-        max_tokens = st.number_input(
-            "Max tokens per request",
-            min_value=1,
-            value=int(app_defaults["max_tokens"]),
-            step=100,
-        )
+    anthropic_api_key = None
+    openai_api_key = None
+    with sidebar.expander("API key", expanded=key_expander_open):
+        if llm_provider == "anthropic":
+            anthropic_api_key = st.text_input(
+                "Anthropic API key",
+                type="password",
+                help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
+            )
+        elif llm_provider == "openai":
+            openai_api_key = st.text_input(
+                "OpenAI API key",
+                type="password",
+                help="Uses OPENAI_API_KEY from the environment if left blank.",
+            )
+        if sidebar.button("Set API key"):
+            if llm_provider == "anthropic" and anthropic_api_key:
+                api_key = anthropic_api_key
+            elif llm_provider == "openai" and openai_api_key:
+                api_key = openai_api_key
 
-        api_key = get_api_key(llm_provider.upper())
-        if not api_key:
-            st.error(f"{llm_provider} API key not found; enter key below")
-
-        # Initialize API key variables
-        anthropic_api_key = None
-        openai_api_key = None
-
-        with st.expander("API keys"):
-            if llm_provider == "anthropic":
-                anthropic_api_key = st.text_input(
-                    "Anthropic API key",
-                    type="password",
-                    help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
-                )
-            elif llm_provider == "openai":
-                openai_api_key = st.text_input(
-                    "OpenAI API key",
-                    type="password",
-                    help="Uses OPENAI_API_KEY from the environment if left blank.",
-                )
-            if st.button("Set API key"):
-                if llm_provider == "anthropic" and anthropic_api_key:
-                    api_key = anthropic_api_key
-                elif llm_provider == "openai" and openai_api_key:
-                    api_key = openai_api_key
+    sidebar.subheader("Audit parameters")
+    max_categories = sidebar.number_input(
+        "Max categories to audit",
+        min_value=1,
+        value=int(app_defaults["max_categories"]),
+        step=1,
+    )
+    max_sentences = sidebar.number_input(
+        "Max sentences per category",
+        min_value=1,
+        value=int(app_defaults["max_sentences_per_category"]),
+        step=1,
+    )
+    max_tokens = sidebar.number_input(
+        "Max tokens per request",
+        min_value=1,
+        value=int(app_defaults["max_tokens"]),
+        step=100,
+    )
 
     missing_reasons = []
     if not uploaded_audit:
