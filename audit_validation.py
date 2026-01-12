@@ -56,15 +56,12 @@ def validate_audit_sentences_sheet(file_bytes: bytes) -> Tuple[str, int, List[in
 
     full_sheet = pd.read_excel(excel_file, sheet_name=sentences_sheet, header=None)
     header_row_offset = header_row_idx + 1
-    col_id, col_sentence, col_category = header_indices
-    warnings: List[str] = []
+    col_sentence = header_indices[1]
+    col_category = header_indices[2]
     data_row_found = False
-    workbook = load_workbook(BytesIO(file_bytes), read_only=False, data_only=True)
-    ws = workbook[sentences_sheet]
 
     for row_idx in range(header_row_offset, len(full_sheet.index)):
         row = full_sheet.iloc[row_idx]
-        sentence_id = row[col_id] if col_id < len(row) else None
         sentence = row[col_sentence] if col_sentence < len(row) else None
         category = row[col_category] if col_category < len(row) else None
 
@@ -74,23 +71,7 @@ def validate_audit_sentences_sheet(file_bytes: bytes) -> Tuple[str, int, List[in
         if sentence_text or category_text:
             data_row_found = True
 
-        missing = []
-        excel_row = row_idx + 1
-        if not sentence_text and not _cell_is_merged_non_top_left(ws, excel_row, col_sentence + 1):
-            missing.append("Sentences")
-        if not category_text and not _cell_is_merged_non_top_left(ws, excel_row, col_category + 1):
-            missing.append("Category")
-
-        if missing:
-            row_label = str(sentence_id).strip() if not pd.isna(sentence_id) else ""
-            if not row_label:
-                row_label = f"row {row_idx + 1}"
-            warnings.append(
-                f"Missing {', '.join(missing)} value for {row_label} on the Sentences sheet."
-            )
-
     if not data_row_found:
         raise ValueError("Sentences sheet must include at least one data row.")
 
-    workbook.close()
-    return sentences_sheet, header_row_idx, header_indices, warnings
+    return sentences_sheet, header_row_idx, header_indices, []
