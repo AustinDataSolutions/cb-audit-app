@@ -23,6 +23,11 @@ DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 
 
+class SummaryStopRequested(Exception):
+    """Raised when the user requests to stop the summary generation."""
+    pass
+
+
 def _load_prompts(prompts_path):
     with open(prompts_path, 'r') as f:
         return yaml.safe_load(f) or {}
@@ -159,6 +164,7 @@ def _collect_summary_records(
     openai_api_key,
     progress_fn,
     warn_fn,
+    check_stop_fn=None,
 ):
     summary_records = []
     issues_by_key = {}
@@ -167,6 +173,10 @@ def _collect_summary_records(
     client = None
 
     for category, findings in audit_findings.items():
+        # Check if stop was requested
+        if check_stop_fn and check_stop_fn():
+            raise SummaryStopRequested("Summary generation stopped by user request")
+
         if progress_fn:
             progress_fn(categories_checked, total_categories, category)
         inaccurate_sent_explanations = ""
@@ -257,6 +267,7 @@ def summarize_audit_report(
     log_fn=None,
     warn_fn=None,
     progress_fn=None,
+    check_stop_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -290,6 +301,7 @@ def summarize_audit_report(
         openai_api_key=openai_api_key,
         progress_fn=progress_fn,
         warn_fn=warn_fn,
+        check_stop_fn=check_stop_fn,
     )
 
     wb = load_workbook(BytesIO(audit_bytes))

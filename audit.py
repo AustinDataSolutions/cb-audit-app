@@ -254,6 +254,11 @@ def _parse_llm_response(response_text):
     return nlp_results
 
 
+class AuditStopRequested(Exception):
+    """Raised when the user requests to stop the audit."""
+    pass
+
+
 def run_audit(
     audit_excel_bytes,
     prompt_template,
@@ -270,6 +275,8 @@ def run_audit(
     log_fn=None,
     warn_fn=None,
     progress_fn=None,
+    save_progress_fn=None,
+    check_stop_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -343,6 +350,25 @@ def run_audit(
     ws_findings = _ensure_findings_sheet(wb)
     ws_sentences = _ensure_sentences_sheet(wb)
 
+    def _save_current_workbook():
+        """Save current workbook state and return bytes."""
+        added_model_avg = False
+        if ws_findings.max_row > 1:
+            # Temporarily add model average row for the partial output
+            _add_model_average_row(ws_findings)
+            _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
+            added_model_avg = True
+        _refresh_auto_filter(ws_findings)
+        _refresh_auto_filter(ws_sentences)
+        temp_output = BytesIO()
+        wb.save(temp_output)
+        temp_output.seek(0)
+        result = temp_output.getvalue()
+        # Remove the temporarily added model average row
+        if added_model_avg:
+            ws_findings.delete_rows(2)
+        return result
+
     total_categories = min(len(categories_to_audit), max_categories)
     cat_count = 0
     for category in categories_to_audit:
@@ -350,6 +376,13 @@ def run_audit(
         if cat_count > max_categories:
             log_fn("Reached max_categories limit.")
             break
+
+        # Check if stop was requested
+        if check_stop_fn and check_stop_fn():
+            if save_progress_fn:
+                save_progress_fn(_save_current_workbook())
+            raise AuditStopRequested("Audit stopped by user request")
+
         if progress_fn:
             progress_fn(cat_count, total_categories, category)
 
@@ -373,26 +406,32 @@ def run_audit(
 
         # log_fn(f"Sending message to LLM for category {category}...")
 
-        if llm_provider == 'anthropic':
-            message = client.messages.create(
-                model=model_name,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "user", "content": message_content}
-                ]
-            )
-            response_text = message.content[0].text
-        elif llm_provider == 'openai':
-            response = client.chat.completions.create(
-                model=model_name,
-                max_completion_tokens=max_tokens,
-                messages=[
-                    {"role": "user", "content": message_content}
-                ]
-            )
-            response_text = response.choices[0].message.content
-        else:
-            raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+        try:
+            if llm_provider == 'anthropic':
+                message = client.messages.create(
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = message.content[0].text
+            elif llm_provider == 'openai':
+                response = client.chat.completions.create(
+                    model=model_name,
+                    max_completion_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                response_text = response.choices[0].message.content
+            else:
+                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+        except Exception as e:
+            # Save progress before re-raising the exception
+            if save_progress_fn:
+                save_progress_fn(_save_current_workbook())
+            raise
 
         nlp_results = _parse_llm_response(response_text)
 
@@ -404,6 +443,10 @@ def run_audit(
         ws_findings.append([category, description, "", ""])
         _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
         _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
+
+        # Save progress after each category completes
+        if save_progress_fn:
+            save_progress_fn(_save_current_workbook())
 
     if ws_findings.max_row > 1:
         _add_model_average_row(ws_findings)
