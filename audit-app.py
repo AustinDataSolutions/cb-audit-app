@@ -423,6 +423,7 @@ def main():
         error_placeholder.empty()
 
     sidebar.subheader("API limits")
+    st.write("Set limits to prevent overspending with LLMs.")
     max_categories = sidebar.number_input(
         "Max categories to audit",
         min_value=1,
@@ -518,7 +519,7 @@ def main():
     summary_prompt_default = _load_summary_prompt(prompts_path)
 
     generate_summary = st.checkbox(
-        "Generate audit summary",
+        "Include summary of issues",
         value=True,
         key="generate_audit_summary",
         help="Generates a note summarizing the issues for each topic that failed the audit"
@@ -527,13 +528,9 @@ def main():
         st.session_state["summary_generation_pending"] = False
 
     if generate_summary:
-        with st.expander("Summary prompt"):
-            st.write(
-                "Generate a summary of the audit findings by having an LLM review the notes "
-                "of all sentences found to be incorrectly categorized."
-            )
+        with st.expander("Summary settings"):
             st.text_area(
-                label="Instructions:",
+                label="Prompt:",
                 value=summary_prompt_default,
                 max_chars=3000,
                 placeholder="Tell the LLM how to summarize audit findings...",
