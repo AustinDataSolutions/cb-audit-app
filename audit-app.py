@@ -309,24 +309,25 @@ def main():
                 f"and any incomplete category will be re-audited entirely."
             )
 
-        with st.expander("Reformat audit (optional)"):
-            st.write("Download a sortable version of the input file.")
-            if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
-                if uploaded_audit is None:
-                    st.error("Please upload an audit file before processing.")
-                    return
-                with st.spinner("Reformatting audit..."):
-                    output, output_filename, warnings = handle_audit_reformat(uploaded_audit)
-                    st.success("Reformat complete.")
-                    if warnings:
-                        st.warning("Input audit file warnings:\n" + "\n".join(warnings))
-                    st.session_state["reformatted_audit_bytes"] = output.getvalue()
-                    st.download_button(
-                        label="Download reformatted audit",
-                        data=output.getvalue(),
-                        file_name=output_filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+        # with st.expander("Reformat audit (optional)"):
+        #     st.write("Download a sortable version of the input file.")
+        #     if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
+        #         if uploaded_audit is None:
+        #             st.error("Please upload an audit file before processing.")
+        #             return
+        #         with st.spinner("Reformatting audit..."):
+        #             output, output_filename, warnings = handle_audit_reformat(uploaded_audit)
+        #             st.success("Reformat complete.")
+        #             if warnings:
+        #                 st.warning("Input audit file warnings:\n" + "\n".join(warnings))
+        #             st.session_state["reformatted_audit_bytes"] = output.getvalue()
+        #             st.download_button(
+        #                 label="Download reformatted audit",
+        #                 data=output.getvalue(),
+        #                 file_name=output_filename,
+        #                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        #             )
+        
         # Allow user to upload an audit file that was already reformatted
         # if st.expander("Reformatted audit file"):
         #     reformatted_audit = st.file_uploader(
