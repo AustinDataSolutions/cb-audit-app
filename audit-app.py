@@ -540,6 +540,15 @@ def main():
                 help="Sentences are batched by category.",
                 key="summary_prompt",
             )
+            st.number_input(
+                label="Accuracy threshold:",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.80,
+                step=0.01,
+                help="Categories with accuracy below this threshold will have summaries generated.",
+                key="accuracy_threshold",
+            )
 
     st.button(
         "Run audit",
@@ -659,12 +668,14 @@ def main():
                     )
                     progress_bar.progress(current / total if total else 0)
 
+                accuracy_threshold = st.session_state.get("accuracy_threshold", 0.80)
                 summary_bytes = summarizer_module.summarize_audit_report(
                     audit_excel_input=audit_output_bytes,
                     msg_template=summary_prompt,
                     llm_provider=llm_provider,
                     model_name=model_name,
                     max_tokens=int(max_tokens),
+                    accuracy_threshold=accuracy_threshold,
                     model_info=model_info,
                     anthropic_api_key=final_anthropic_key,
                     openai_api_key=final_openai_key,
