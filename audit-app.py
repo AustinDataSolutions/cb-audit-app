@@ -234,7 +234,7 @@ def get_api_key(provider="ANTHROPIC"):
 
 def main():
     # st.cache_data.clear()
-    st.title("Automated Audit")
+    st.title("Automatic Audit")
     st.write("This app uses an LLM to audit the accuracy of CX Designer models, and provides a summary of the findings.")
     if "audit_in_progress" not in st.session_state:
         st.session_state["audit_in_progress"] = False
@@ -422,8 +422,7 @@ def main():
     else:
         error_placeholder.empty()
 
-    sidebar.subheader("API limits")
-    st.write("Set limits to prevent overspending with LLMs.")
+    sidebar.subheader("API limits", help="Set limits to prevent overspending with LLMs")
     max_categories = sidebar.number_input(
         "Max categories to audit",
         min_value=1,
