@@ -29,9 +29,9 @@ DEFAULT_MAX_TOKENS = 10000
 COLUMN_WIDTH_PX = 300
 COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
 FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
-SENTENCES_HEADERS = ["Sentence", "Topic", "Audit", "Explanation"]
+SENTENCES_HEADERS = ["ID", "Sentence", "Topic", "Audit", "Explanation"]
 FINDINGS_WRAP_COLUMNS = (1, 2, 4)
-SENTENCES_WRAP_COLUMNS = (1, 2, 4)
+SENTENCES_WRAP_COLUMNS = (2, 3, 5)
 HEADER_FONT = Font(bold=True)
 HEADER_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
@@ -39,8 +39,9 @@ WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 
 def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
     sheet_ref = f"'{sentences_sheet_title}'"
-    category_col = f"{sheet_ref}!B:B"
-    judgment_col = f"{sheet_ref}!C:C"
+    # Sentences columns: A=ID, B=Sentence, C=Topic, D=Audit, E=Explanation
+    category_col = f"{sheet_ref}!C:C"
+    judgment_col = f"{sheet_ref}!D:D"
     category_cell = "INDEX(A:A, ROW())"
     formula = (
         f"=IF(COUNTIF({category_col}, {category_cell})=0, 0, "
@@ -140,10 +141,6 @@ def _ensure_sentences_sheet(wb):
     else:
         ws = wb.create_sheet(title="Sentences")
 
-    header_value = ws.cell(row=1, column=1).value
-    if isinstance(header_value, str) and header_value.strip().casefold() == "sentence id":
-        ws.delete_cols(1)
-
     _ensure_headers(ws, SENTENCES_HEADERS)
     _apply_header_style(ws, len(SENTENCES_HEADERS))
     _set_column_widths(ws, SENTENCES_WRAP_COLUMNS)
@@ -177,29 +174,73 @@ def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
     raise ValueError("llm_provider must be 'anthropic' or 'openai'")
 
 
-def _build_category_sentences(df):
+def _build_category_sentences(df, is_output_format=False):
+    """
+    Build a mapping of category -> {sentence_id: sentence}.
+
+    For input format: columns are [ID, Sentence, Category, ...]
+    For output format (new): columns are [ID, Sentence, Topic, Audit, Explanation]
+    For output format (old): columns are [Sentence, Topic, Audit, Explanation]
+        - For old format, IDs are generated as row indices
+    """
     category_sentences = {}
 
-    id_col = df.columns[0]
-    sentence_col = df.columns[1]
-    category_col = df.columns[2]
+    if is_output_format:
+        # Check if this is new format (with ID) or old format (without)
+        first_col_name = str(df.columns[0]).strip().casefold() if len(df.columns) > 0 else ""
+        has_id_col = first_col_name == "id"
 
-    first_row = df.iloc[0]
-    if all(pd.isna(val) for val in first_row):
-        raise ValueError(
-            "The first row in the audit file is completely blank. "
-            "Reformat the audit file before running the audit."
-        )
+        if has_id_col:
+            id_col = df.columns[0]
+            sentence_col = df.columns[1]
+            category_col = df.columns[2]
 
-    for _, row in df.iterrows():
-        category = row[category_col]
-        sentence_id = row[id_col]
-        sentence = row[sentence_col]
-        if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id):
-            continue
-        if category not in category_sentences:
-            category_sentences[category] = {}
-        category_sentences[category][sentence_id] = sentence
+            for _, row in df.iterrows():
+                category = row[category_col]
+                sentence_id = row[id_col]
+                sentence = row[sentence_col]
+                if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id):
+                    continue
+                if category not in category_sentences:
+                    category_sentences[category] = {}
+                category_sentences[category][sentence_id] = sentence
+        else:
+            # Old output format without ID column
+            sentence_col = df.columns[0]
+            category_col = df.columns[1]
+            # Generate synthetic IDs for old output format
+            row_idx = 0
+            for _, row in df.iterrows():
+                row_idx += 1
+                category = row[category_col]
+                sentence = row[sentence_col]
+                if pd.isna(category) or pd.isna(sentence):
+                    continue
+                if category not in category_sentences:
+                    category_sentences[category] = {}
+                # Use row index as synthetic ID
+                category_sentences[category][row_idx] = sentence
+    else:
+        id_col = df.columns[0]
+        sentence_col = df.columns[1]
+        category_col = df.columns[2]
+
+        first_row = df.iloc[0]
+        if all(pd.isna(val) for val in first_row):
+            raise ValueError(
+                "The first row in the audit file is completely blank. "
+                "Reformat the audit file before running the audit."
+            )
+
+        for _, row in df.iterrows():
+            category = row[category_col]
+            sentence_id = row[id_col]
+            sentence = row[sentence_col]
+            if pd.isna(category) or pd.isna(sentence) or pd.isna(sentence_id):
+                continue
+            if category not in category_sentences:
+                category_sentences[category] = {}
+            category_sentences[category][sentence_id] = sentence
 
     return category_sentences
 
@@ -259,6 +300,197 @@ class AuditStopRequested(Exception):
     pass
 
 
+def detect_partial_audit(audit_bytes):
+    """
+    Detect if the uploaded file is a partial audit output from this app.
+
+    Returns a dict with:
+      - is_partial: bool - True if this is a partial audit
+      - completed_categories: set - categories with all sentences judged
+      - incomplete_categories: set - categories with some but not all sentences judged
+      - unjudged_categories: set - categories with no sentences judged
+    """
+    result = {
+        "is_partial": False,
+        "completed_categories": set(),
+        "incomplete_categories": set(),
+        "unjudged_categories": set(),
+    }
+
+    try:
+        excel_file = pd.ExcelFile(BytesIO(audit_bytes))
+        sheet_names_lower = [name.casefold() for name in excel_file.sheet_names]
+
+        # Check if this looks like our output format (has Findings and Sentences sheets)
+        has_findings = "findings" in sheet_names_lower or "topics" in sheet_names_lower
+        has_sentences = "sentences" in sheet_names_lower
+
+        if not (has_findings and has_sentences):
+            return result
+
+        # Find the actual sheet names
+        sentences_sheet = None
+        for name in excel_file.sheet_names:
+            if name.casefold() == "sentences":
+                sentences_sheet = name
+                break
+
+        if not sentences_sheet:
+            return result
+
+        df = pd.read_excel(excel_file, sheet_name=sentences_sheet)
+
+        # Check if it has expected headers: ID, Sentence, Topic, Audit, Explanation
+        # Also support old format without ID: Sentence, Topic, Audit, Explanation
+        if len(df.columns) < 4:
+            return result
+
+        headers = [str(col).strip().casefold() for col in df.columns[:5] if col is not None]
+        expected_headers_new = ["id", "sentence", "topic", "audit", "explanation"]
+        expected_headers_old = ["sentence", "topic", "audit", "explanation"]
+
+        has_id_column = False
+        if len(headers) >= 5 and headers[:5] == expected_headers_new:
+            has_id_column = True
+        elif len(headers) >= 4 and headers[:4] == expected_headers_old:
+            has_id_column = False
+        else:
+            return result
+
+        # This is our output format - analyze category completion
+        result["is_partial"] = True
+
+        if has_id_column:
+            id_col = df.columns[0]
+            sentence_col = df.columns[1]
+            topic_col = df.columns[2]
+            audit_col = df.columns[3]
+            explanation_col = df.columns[4]
+        else:
+            id_col = None
+            sentence_col = df.columns[0]
+            topic_col = df.columns[1]
+            audit_col = df.columns[2]
+            explanation_col = df.columns[3]
+
+        # Group sentences by category and check completion
+        category_stats = {}
+        for _, row in df.iterrows():
+            topic = row[topic_col]
+            if pd.isna(topic):
+                continue
+            topic_str = str(topic).strip()
+            if not topic_str:
+                continue
+
+            if topic_str not in category_stats:
+                category_stats[topic_str] = {"total": 0, "judged": 0}
+
+            category_stats[topic_str]["total"] += 1
+
+            # A sentence is considered judged if it has a non-empty Explanation
+            explanation = row[explanation_col]
+            if not pd.isna(explanation) and str(explanation).strip():
+                category_stats[topic_str]["judged"] += 1
+
+        for category, stats in category_stats.items():
+            if stats["judged"] == 0:
+                result["unjudged_categories"].add(category)
+            elif stats["judged"] < stats["total"]:
+                result["incomplete_categories"].add(category)
+            else:
+                result["completed_categories"].add(category)
+
+        # If all categories are complete, this is not a partial audit
+        if not result["incomplete_categories"] and not result["unjudged_categories"]:
+            result["is_partial"] = False
+
+    except Exception:
+        pass
+
+    return result
+
+
+def _load_existing_audit_data(audit_bytes):
+    """
+    Load existing audit data from a partial audit file.
+
+    Returns a dict with:
+      - sentences_by_category: {category: [(sentence_id, sentence, judgment, explanation), ...]}
+      - findings_by_category: {category: description}
+    """
+    result = {
+        "sentences_by_category": {},
+        "findings_by_category": {},
+    }
+
+    try:
+        wb = load_workbook(BytesIO(audit_bytes))
+
+        # Load sentences - detect if ID column exists
+        if "Sentences" in wb.sheetnames:
+            ws = wb["Sentences"]
+            # Check header to determine format
+            first_header = ws.cell(row=1, column=1).value
+            has_id_col = first_header and str(first_header).strip().casefold() == "id"
+
+            for row_idx in range(2, ws.max_row + 1):
+                if has_id_col:
+                    sentence_id = ws.cell(row=row_idx, column=1).value
+                    sentence = ws.cell(row=row_idx, column=2).value
+                    topic = ws.cell(row=row_idx, column=3).value
+                    judgment = ws.cell(row=row_idx, column=4).value
+                    explanation = ws.cell(row=row_idx, column=5).value
+                else:
+                    # Old format without ID - use row index as synthetic ID
+                    sentence_id = row_idx - 1
+                    sentence = ws.cell(row=row_idx, column=1).value
+                    topic = ws.cell(row=row_idx, column=2).value
+                    judgment = ws.cell(row=row_idx, column=3).value
+                    explanation = ws.cell(row=row_idx, column=4).value
+
+                if topic is None:
+                    continue
+                topic_str = str(topic).strip()
+                if not topic_str:
+                    continue
+
+                if topic_str not in result["sentences_by_category"]:
+                    result["sentences_by_category"][topic_str] = []
+
+                result["sentences_by_category"][topic_str].append((
+                    sentence_id,
+                    sentence,
+                    judgment if judgment else "",
+                    explanation if explanation else "",
+                ))
+
+        # Load findings (skip MODEL AVERAGE row)
+        findings_sheet = None
+        for name in ["Findings", "Topics"]:
+            if name in wb.sheetnames:
+                findings_sheet = name
+                break
+
+        if findings_sheet:
+            ws = wb[findings_sheet]
+            for row_idx in range(2, ws.max_row + 1):
+                topic = ws.cell(row=row_idx, column=1).value
+                if topic is None:
+                    continue
+                topic_str = str(topic).strip()
+                if topic_str.upper() == "MODEL AVERAGE":
+                    continue
+                description = ws.cell(row=row_idx, column=2).value
+                result["findings_by_category"][topic_str] = description if description else ""
+
+        wb.close()
+    except Exception:
+        pass
+
+    return result
+
+
 def run_audit(
     audit_excel_bytes,
     prompt_template,
@@ -277,13 +509,15 @@ def run_audit(
     progress_fn=None,
     save_progress_fn=None,
     check_stop_fn=None,
+    existing_audit_bytes=None,
+    completed_categories=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
     if warn_fn is None:
         warn_fn = log_fn
 
-    sentences_sheet, header_row_idx, _, warnings = validate_audit_sentences_sheet(audit_excel_bytes)
+    sentences_sheet, header_row_idx, _, warnings, is_output_format = validate_audit_sentences_sheet(audit_excel_bytes)
     if warnings:
         warn_fn("Input audit file warnings:\n" + "\n".join(warnings))
     df = pd.read_excel(
@@ -291,7 +525,7 @@ def run_audit(
         sheet_name=sentences_sheet,
         header=header_row_idx,
     )
-    category_sentences = _build_category_sentences(df)
+    category_sentences = _build_category_sentences(df, is_output_format)
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
 
@@ -342,13 +576,66 @@ def run_audit(
                 "Check the selection or upload a matching model tree."
             )
 
-    client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
     if model_name is None:
         model_name = DEFAULT_ANTHROPIC_MODEL if llm_provider == 'anthropic' else DEFAULT_OPENAI_MODEL
+
+    # Prepare sets for tracking which categories to actually audit
+    if completed_categories is None:
+        completed_categories = set()
+
+    # Load existing audit data if resuming
+    existing_data = None
+    if existing_audit_bytes:
+        existing_data = _load_existing_audit_data(existing_audit_bytes)
 
     wb = Workbook()
     ws_findings = _ensure_findings_sheet(wb)
     ws_sentences = _ensure_sentences_sheet(wb)
+
+    # Track which categories need LLM auditing vs already completed
+    categories_needing_audit = []
+    for category in categories_to_audit:
+        if category in completed_categories:
+            continue
+        categories_needing_audit.append(category)
+
+    # Write all categories upfront (completed ones with their data, others with placeholders)
+    findings_row_map = {}  # category -> row index in findings sheet
+    sentences_row_ranges = {}  # category -> (start_row, end_row) in sentences sheet
+
+    for category in categories_to_audit:
+        description = category_descriptions.get(category, "None") or "None"
+        sent_tuples = list(category_sentences[category].items())
+
+        # Record starting row for sentences
+        start_row = ws_sentences.max_row + 1
+
+        if category in completed_categories and existing_data:
+            # Use existing data for completed categories
+            existing_sentences = existing_data["sentences_by_category"].get(category, [])
+            for sent_data in existing_sentences:
+                sentence_id, sentence, judgment, explanation = sent_data
+                ws_sentences.append([sentence_id, sentence, category, judgment, explanation])
+                _apply_alignment_to_row(ws_sentences, ws_sentences.max_row, SENTENCES_WRAP_COLUMNS)
+
+            # Add findings row
+            ws_findings.append([category, description, "", ""])
+            _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
+            _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
+        else:
+            # Write placeholder sentences for categories to be audited
+            for sentence_id, sentence in sent_tuples:
+                ws_sentences.append([sentence_id, sentence, category, "", ""])
+                _apply_alignment_to_row(ws_sentences, ws_sentences.max_row, SENTENCES_WRAP_COLUMNS)
+
+            # Add findings row with "Not yet audited" status
+            ws_findings.append([category, description, "", "Not yet audited"])
+            _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
+            _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
+
+        end_row = ws_sentences.max_row
+        findings_row_map[category] = ws_findings.max_row
+        sentences_row_ranges[category] = (start_row, end_row)
 
     def _save_current_workbook():
         """Save current workbook state and return bytes."""
@@ -369,9 +656,14 @@ def run_audit(
             ws_findings.delete_rows(2)
         return result
 
-    total_categories = min(len(categories_to_audit), max_categories)
+    # Now only connect to LLM if there are categories to audit
+    client = None
+    if categories_needing_audit:
+        client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
+
+    total_categories = min(len(categories_needing_audit), max_categories)
     cat_count = 0
-    for category in categories_to_audit:
+    for category in categories_needing_audit:
         cat_count += 1
         if cat_count > max_categories:
             log_fn("Reached max_categories limit.")
@@ -435,14 +727,22 @@ def run_audit(
 
         nlp_results = _parse_llm_response(response_text)
 
+        # Update the existing sentences rows with judgment results
+        # Columns: ID(1), Sentence(2), Topic(3), Audit(4), Explanation(5)
+        start_row, end_row = sentences_row_ranges[category]
+        row_idx = start_row
         for sentence_id, sentence in sent_tuples:
+            if row_idx > end_row:
+                break
             judgment, explanation = nlp_results.get(str(sentence_id), ("", ""))
-            ws_sentences.append([sentence, category, judgment, explanation])
-            _apply_alignment_to_row(ws_sentences, ws_sentences.max_row, SENTENCES_WRAP_COLUMNS)
+            ws_sentences.cell(row=row_idx, column=4, value=judgment)
+            ws_sentences.cell(row=row_idx, column=5, value=explanation)
+            _apply_alignment_to_row(ws_sentences, row_idx, SENTENCES_WRAP_COLUMNS)
+            row_idx += 1
 
-        ws_findings.append([category, description, "", ""])
-        _apply_alignment_to_row(ws_findings, ws_findings.max_row, FINDINGS_WRAP_COLUMNS)
-        _apply_precision_formula(ws_findings, ws_findings.max_row, ws_sentences.title)
+        # Update the findings row to clear "Not yet audited" status
+        findings_row = findings_row_map[category]
+        ws_findings.cell(row=findings_row, column=4, value="")
 
         # Save progress after each category completes
         if save_progress_fn:
@@ -503,12 +803,12 @@ def run_audit_from_config():
     excel_path = os.path.join(inputs_dir, audit_file_name)
     with open(excel_path, "rb") as f:
         file_bytes = f.read()
-    sentences_sheet, header_row_idx, _, warnings = validate_audit_sentences_sheet(file_bytes)
+    sentences_sheet, header_row_idx, _, warnings, is_output_format = validate_audit_sentences_sheet(file_bytes)
     if warnings:
         for warning in warnings:
             print(f"WARNING: {warning}")
     df = pd.read_excel(excel_path, sheet_name=sentences_sheet, header=header_row_idx)
-    category_sentences = _build_category_sentences(df)
+    category_sentences = _build_category_sentences(df, is_output_format)
 
     model_tree_bytes = None
     if model_tree_file:

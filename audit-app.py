@@ -10,7 +10,7 @@ import yaml
 
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
-from audit import run_audit, AuditStopRequested
+from audit import run_audit, AuditStopRequested, detect_partial_audit
 
 
 def _load_summary_prompt(prompts_path):
@@ -76,7 +76,7 @@ def _topic_key(value):
 
 
 def _get_audit_stats(audit_bytes):
-    sentences_sheet, header_row_idx, _, _ = validate_audit_sentences_sheet(audit_bytes)
+    sentences_sheet, header_row_idx, _, _, is_output_format = validate_audit_sentences_sheet(audit_bytes)
     df = pd.read_excel(
         BytesIO(audit_bytes),
         sheet_name=sentences_sheet,
@@ -89,15 +89,40 @@ def _get_audit_stats(audit_bytes):
             "max_sentences_per_category": 0,
         }
 
-    id_col = df.columns[0]
-    sentence_col = df.columns[1]
-    category_col = df.columns[2]
+    # Determine column layout based on format
+    if is_output_format:
+        # Check if new format with ID column or old format without
+        first_col_name = str(df.columns[0]).strip().casefold() if len(df.columns) > 0 else ""
+        if first_col_name == "id":
+            # New output format: ID, Sentence, Topic, Audit, Explanation
+            id_col = df.columns[0]
+            sentence_col = df.columns[1]
+            category_col = df.columns[2]
+        else:
+            # Old output format: Sentence, Topic, Audit, Explanation
+            id_col = None
+            sentence_col = df.columns[0]
+            category_col = df.columns[1]
+    else:
+        # Input format: #, Sentences, Category, ...
+        id_col = df.columns[0]
+        sentence_col = df.columns[1]
+        category_col = df.columns[2]
+
     category_sentences = {}
+    row_idx = 0
     for _, row in df.iterrows():
+        row_idx += 1
         category = row[category_col]
-        sentence_id = row[id_col]
         sentence = row[sentence_col]
-        if pd.isna(category) or pd.isna(sentence_id) or pd.isna(sentence):
+        if id_col is not None:
+            sentence_id = row[id_col]
+        else:
+            sentence_id = row_idx  # Synthetic ID for old output format
+
+        if pd.isna(category) or pd.isna(sentence):
+            continue
+        if id_col is not None and pd.isna(sentence_id):
             continue
         category_name = str(category).strip()
         if not category_name:
@@ -264,6 +289,26 @@ def main():
             st.session_state["audit_source_name"] = uploaded_audit.name
             st.session_state.pop("reformatted_audit_bytes", None)
             st.session_state.pop("audit_output_bytes", None)
+            st.session_state.pop("partial_audit_detection", None)
+
+        # Detect if this is a partial audit file
+        if "partial_audit_detection" not in st.session_state:
+            audit_bytes_to_check = uploaded_audit.getvalue()
+            detection = detect_partial_audit(audit_bytes_to_check)
+            st.session_state["partial_audit_detection"] = detection
+
+        partial_detection = st.session_state.get("partial_audit_detection", {})
+        if partial_detection.get("is_partial"):
+            completed_count = len(partial_detection.get("completed_categories", set()))
+            incomplete_count = len(partial_detection.get("incomplete_categories", set()))
+            unjudged_count = len(partial_detection.get("unjudged_categories", set()))
+            st.warning(
+                f"Detected partially completed audit. "
+                f"({completed_count} completed, {incomplete_count} incomplete, {unjudged_count} not yet audited). "
+                f"Program will only audit the categories that have not been completed yet, "
+                f"and any incomplete category will be re-audited entirely."
+            )
+
         with st.expander("Reformat audit (optional)"):
             st.write("Download a sortable version of the input file.")
             if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
@@ -320,22 +365,27 @@ def main():
         
         if uploaded_audit:
             try:
-                audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
-                if not audit_bytes_for_stats:
-                    audit_bytes_for_stats = uploaded_audit.getvalue()
-                stats = _get_audit_stats(audit_bytes_for_stats)
-                tree_nodes = model_data.get("tree_nodes", [])
-                model_top_levels = {
-                    _topic_key(node.get("label", ""))
-                    for node in tree_nodes
-                    if node.get("label")
-                }
-                audit_top_levels = stats.get("top_level_categories", set())
-                if model_top_levels and audit_top_levels:
-                    if model_top_levels != audit_top_levels:
-                        st.warning(
-                            "Category names in XML tree do not align with audit file; check that correct files were selected."
-                        )
+                # Skip alignment check for partial audits - they may only have a subset of categories
+                partial_detection = st.session_state.get("partial_audit_detection", {})
+                is_partial_audit = partial_detection.get("is_partial", False)
+
+                if not is_partial_audit:
+                    audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
+                    if not audit_bytes_for_stats:
+                        audit_bytes_for_stats = uploaded_audit.getvalue()
+                    stats = _get_audit_stats(audit_bytes_for_stats)
+                    tree_nodes = model_data.get("tree_nodes", [])
+                    model_top_levels = {
+                        _topic_key(node.get("label", ""))
+                        for node in tree_nodes
+                        if node.get("label")
+                    }
+                    audit_top_levels = stats.get("top_level_categories", set())
+                    if model_top_levels and audit_top_levels:
+                        if model_top_levels != audit_top_levels:
+                            st.warning(
+                                "Category names in XML tree do not align with audit file; check that correct files were selected."
+                            )
             except Exception:
                 pass
 
@@ -570,6 +620,10 @@ def main():
         else:
             st.session_state["audit_run_requested"] = False
             st.session_state["summary_generation_pending"] = False
+
+            partial_detection = st.session_state.get("partial_audit_detection", {})
+            is_partial_audit = partial_detection.get("is_partial", False)
+
             audit_bytes = st.session_state.get("reformatted_audit_bytes")
 
             if not audit_bytes:
@@ -577,12 +631,17 @@ def main():
                     st.error("Please upload an audit file before running the audit.")
                     st.session_state["audit_in_progress"] = False
                     return
-                with st.spinner("Reformatting audit..."):
-                    output, _, warnings = handle_audit_reformat(uploaded_audit)
-                    if warnings:
-                        st.warning("Input audit file warnings:\n" + "\n".join(warnings))
-                    st.session_state["reformatted_audit_bytes"] = output.getvalue()
-                    audit_bytes = st.session_state["reformatted_audit_bytes"]
+                # For partial audits, skip reformatting - the file is already in our format
+                if is_partial_audit:
+                    audit_bytes = uploaded_audit.getvalue()
+                    st.session_state["reformatted_audit_bytes"] = audit_bytes
+                else:
+                    with st.spinner("Reformatting audit..."):
+                        output, _, warnings = handle_audit_reformat(uploaded_audit)
+                        if warnings:
+                            st.warning("Input audit file warnings:\n" + "\n".join(warnings))
+                        st.session_state["reformatted_audit_bytes"] = output.getvalue()
+                        audit_bytes = st.session_state["reformatted_audit_bytes"]
 
             if not model_tree and not st.session_state.get("topics_to_audit"):
                 topics_to_audit = None
@@ -627,6 +686,15 @@ def main():
                     final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
                     final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
 
+                    # Check for partial audit resume
+                    partial_detection = st.session_state.get("partial_audit_detection", {})
+                    existing_audit_bytes = None
+                    completed_categories = None
+                    if partial_detection.get("is_partial"):
+                        existing_audit_bytes = uploaded_audit.getvalue()
+                        # Completed categories are those fully judged; incomplete ones will be re-audited
+                        completed_categories = partial_detection.get("completed_categories", set())
+
                     output_bytes = run_audit(
                         audit_excel_bytes=audit_bytes,
                         prompt_template=audit_prompt,
@@ -645,6 +713,8 @@ def main():
                         progress_fn=_update_progress,
                         save_progress_fn=_save_progress,
                         check_stop_fn=_check_stop,
+                        existing_audit_bytes=existing_audit_bytes,
+                        completed_categories=completed_categories,
                     )
                     progress_bar.progress(1.0)
                     progress_text.empty()

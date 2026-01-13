@@ -16,7 +16,7 @@ def _build_sortable_filename(uploaded_file):
 
 def handle_audit_reformat(uploaded_file):
     file_bytes = uploaded_file.read()
-    _, _, _, warnings = validate_audit_sentences_sheet(file_bytes)
+    _, _, _, warnings, _ = validate_audit_sentences_sheet(file_bytes)
     excel_file = pd.ExcelFile(BytesIO(file_bytes))
 
     sentences_sheet = excel_file.parse(excel_file.sheet_names[0], header=None)
