@@ -8,7 +8,7 @@ import pandas as pd
 from streamlit_tree_select import tree_select
 import yaml
 import hmac
-
+import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit
@@ -21,15 +21,26 @@ def check_password():
     if st.session_state.get("authenticated"):
         return True
 
+    # Track failed attempts
+    if "failed_attempts" not in st.session_state:
+        st.session_state["failed_attempts"] = 0
+
     password = st.text_input("Enter password to access this app", type="password")
     
     if password:
         # Compare securely using constant-time comparison
         if hmac.compare_digest(password, st.secrets["APP_PASSWORD"]):
             st.session_state["authenticated"] = True
+            st.session_state["failed_attempts"] = 0
             st.rerun()  # Clears the password field from view
         else:
-            st.error("Incorrect password")
+            st.session_state["failed_attempts"] += 1
+
+            # Exponential backoff: 2s, 4s, 8s, 16s... capped at 60s to protect form brute-force attacks
+            delay = min(2 ** st.session_state["failed_attempts"], 60)
+            time.sleep(delay)
+
+            st.error(f"Incorrect password. Please wait {delay} seconds before trying again.")
     return False
 
 if not check_password():
