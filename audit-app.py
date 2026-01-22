@@ -54,7 +54,7 @@ def _fetch_openai_models(api_key):
 
 def _get_model_options(llm_provider, api_key, default_model):
     if not api_key:
-        return [default_model], False, "No API key found in Streamlit secrets."
+        return [default_model], False, "No API key found."
 
     if llm_provider == "anthropic":
         models, err = _fetch_anthropic_models(api_key)
@@ -76,6 +76,18 @@ def _get_model_options(llm_provider, api_key, default_model):
         unique_models.insert(0, default_model)
 
     return unique_models, True, None
+
+
+def _validate_api_key(llm_provider, api_key):
+    if not api_key:
+        return False, "No API key provided."
+    if llm_provider == "anthropic":
+        _, err = _fetch_anthropic_models(api_key)
+    else:
+        _, err = _fetch_openai_models(api_key)
+    if err:
+        return False, str(err)
+    return True, None
 
 def check_password():
     """Returns True if the user entered the correct password"""
@@ -526,11 +538,23 @@ def main():
         if default_provider in llm_provider_options
         else 0
     )
+    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
+
+    manual_key_valid = st.session_state.get("manual_api_key_valid", False)
+    manual_key_provider = st.session_state.get("manual_api_key_provider")
+
     llm_provider = sidebar.selectbox(
         "LLM provider",
         options=llm_provider_options,
         index=provider_index,
+        disabled=use_manual_api_key and not manual_key_valid,
     )
+    if use_manual_api_key and manual_key_provider and manual_key_provider != llm_provider:
+        st.session_state["manual_api_key_valid"] = False
+        st.session_state["manual_api_key_error"] = None
+        st.session_state["manual_api_key_provider"] = None
+        manual_key_valid = False
+        manual_key_provider = None
 
     default_model = (
         app_defaults["model_name_anthropic"]
@@ -540,50 +564,74 @@ def main():
     
     api_key = get_api_key(llm_provider.upper())
     error_placeholder = sidebar.empty()
-    model_options, models_enabled, model_error = _get_model_options(llm_provider, api_key, default_model)
-    model_index = model_options.index(default_model) if default_model in model_options else 0
-    model_name = sidebar.selectbox(
-        "Model",
-        options=model_options,
-        index=model_index,
-        disabled=not models_enabled,
-    )
-    if not models_enabled:
-        sidebar.warning(f"Set valid API credentials. Debug: {model_error}")
 
-    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
-
-    anthropic_api_key = None
-    openai_api_key = None
+    manual_key_error = st.session_state.get("manual_api_key_error")
+    manual_key_value = None
     if use_manual_api_key:
         if llm_provider == "anthropic":
-            anthropic_api_key = sidebar.text_input(
+            manual_key_value = sidebar.text_input(
                 "Anthropic API key",
                 type="password",
                 help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
             )
         elif llm_provider == "openai":
-            openai_api_key = sidebar.text_input(
+            manual_key_value = sidebar.text_input(
                 "OpenAI API key",
                 type="password",
                 help="Uses OPENAI_API_KEY from the environment if left blank.",
             )
         if sidebar.button("Set API key"):
-            if llm_provider == "anthropic" and anthropic_api_key:
-                api_key = anthropic_api_key
-            elif llm_provider == "openai" and openai_api_key:
-                api_key = openai_api_key
+            is_valid, err = _validate_api_key(llm_provider, manual_key_value)
+            st.session_state["manual_api_key_valid"] = is_valid
+            st.session_state["manual_api_key_error"] = err
+            st.session_state["manual_api_key_provider"] = llm_provider if is_valid else None
+            if is_valid:
+                st.session_state["manual_api_key_value"] = manual_key_value
+            manual_key_valid = is_valid
+            manual_key_error = err
 
-    manual_key_present = False
+        if manual_key_error:
+            sidebar.error(f"API key invalid: {manual_key_error}")
+
     if use_manual_api_key:
-        if llm_provider == "anthropic":
-            manual_key_present = bool((anthropic_api_key or "").strip())
+        key_for_models = st.session_state.get("manual_api_key_value") if manual_key_valid else None
+        if not manual_key_valid:
+            model_options = [default_model]
+            models_enabled = False
+            model_error = "Set valid API credentials."
         else:
-            manual_key_present = bool((openai_api_key or "").strip())
-    if not (api_key or manual_key_present):
-        error_placeholder.error(f"{llm_provider} API key not found; enter key below")
+            model_options, models_enabled, model_error = _get_model_options(llm_provider, key_for_models, default_model)
     else:
-        error_placeholder.empty()
+        model_options, models_enabled, model_error = _get_model_options(llm_provider, api_key, default_model)
+
+    model_index = model_options.index(default_model) if default_model in model_options else 0
+    model_name = sidebar.selectbox(
+        "Model",
+        options=model_options,
+        index=model_index,
+        disabled=(use_manual_api_key and not manual_key_valid) or not models_enabled,
+    )
+    if (use_manual_api_key and not manual_key_valid) or not models_enabled:
+        sidebar.warning(model_error or "Set valid API credentials")
+
+    anthropic_api_key = None
+    openai_api_key = None
+    if use_manual_api_key and manual_key_valid:
+        if llm_provider == "anthropic":
+            anthropic_api_key = st.session_state.get("manual_api_key_value")
+        elif llm_provider == "openai":
+            openai_api_key = st.session_state.get("manual_api_key_value")
+
+    if use_manual_api_key:
+        if not manual_key_valid:
+            error_placeholder.error("Valid API key required when using your own API key.")
+        else:
+            error_placeholder.empty()
+    else:
+        if not api_key:
+            error_placeholder.error(f"{llm_provider} API key not found in Streamlit secrets.")
+        else:
+            error_placeholder.empty()
 
     sidebar.subheader("API limits", help="Set limits to prevent overspending with LLMs")
     max_categories = sidebar.number_input(
@@ -609,11 +657,19 @@ def main():
     if not uploaded_audit:
         missing_reasons.append("Upload an audit file")
     if llm_provider == "anthropic":
-        if not (api_key or anthropic_api_key):
-            missing_reasons.append("Provide an API key to access LLM audit functionality")
+        if use_manual_api_key:
+            if not manual_key_valid:
+                missing_reasons.append("Provide a valid Anthropic API key")
+        else:
+            if not api_key:
+                missing_reasons.append("Provide an API key to access LLM audit functionality")
     elif llm_provider == "openai":
-        if not (api_key or openai_api_key):
-            missing_reasons.append("Provide an OpenAI API key")
+        if use_manual_api_key:
+            if not manual_key_valid:
+                missing_reasons.append("Provide a valid OpenAI API key")
+        else:
+            if not api_key:
+                missing_reasons.append("Provide an OpenAI API key")
 
     can_run_audit = not missing_reasons
     run_help = (
@@ -787,9 +843,12 @@ def main():
                     def _check_stop():
                         return st.session_state.get("audit_stop_requested", False)
 
-                    # Use api_key if set, otherwise use the text input values
-                    final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
-                    final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
+                    if use_manual_api_key:
+                        final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
+                        final_openai_key = openai_api_key if llm_provider == "openai" else None
+                    else:
+                        final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
+                        final_openai_key = api_key if llm_provider == "openai" and api_key else None
 
                     # Check for partial audit resume
                     partial_detection = st.session_state.get("partial_audit_detection", {})
@@ -850,11 +909,19 @@ def main():
     if not audit_output_bytes:
         summary_missing_reasons.append("Run the audit first")
     if llm_provider == "anthropic":
-        if not (api_key or anthropic_api_key):
-            summary_missing_reasons.append("Provide an Anthropic API key")
+        if use_manual_api_key:
+            if not manual_key_valid:
+                summary_missing_reasons.append("Provide a valid Anthropic API key")
+        else:
+            if not api_key:
+                summary_missing_reasons.append("Provide an Anthropic API key")
     elif llm_provider == "openai":
-        if not (api_key or openai_api_key):
-            summary_missing_reasons.append("Provide an OpenAI API key")
+        if use_manual_api_key:
+            if not manual_key_valid:
+                summary_missing_reasons.append("Provide a valid OpenAI API key")
+        else:
+            if not api_key:
+                summary_missing_reasons.append("Provide an OpenAI API key")
 
     can_run_summary = not summary_missing_reasons
     summary_help = (
@@ -878,8 +945,12 @@ def main():
             with st.spinner("Summarizing audit..."):
                 summarizer_module = _load_summarizer_module()
                 SummaryStopRequested = summarizer_module.SummaryStopRequested
-                final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else (anthropic_api_key or None)
-                final_openai_key = api_key if llm_provider == "openai" and api_key else (openai_api_key or None)
+                if use_manual_api_key:
+                    final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
+                    final_openai_key = openai_api_key if llm_provider == "openai" else None
+                else:
+                    final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
+                    final_openai_key = api_key if llm_provider == "openai" and api_key else None
                 progress_container = st.container()
                 progress_text = progress_container.empty()
                 progress_bar = progress_container.progress(0)
