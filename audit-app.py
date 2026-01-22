@@ -13,6 +13,69 @@ from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit
 
+# Configure Streamlit page (must be the first Streamlit call)
+st.set_page_config(page_title="Enhanced Audit", initial_sidebar_state="collapsed")
+
+def _fetch_anthropic_models(api_key):
+    try:
+        import anthropic
+    except Exception as exc:
+        return None, exc
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.models.list()
+        data = getattr(response, "data", response)
+        models = []
+        for item in data:
+            model_id = getattr(item, "id", None)
+            if model_id is None and isinstance(item, dict):
+                model_id = item.get("id")
+            if model_id:
+                models.append(model_id)
+        return models, None
+    except Exception as exc:
+        return None, exc
+
+
+def _fetch_openai_models(api_key):
+    try:
+        from openai import OpenAI
+    except Exception as exc:
+        return None, exc
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.models.list()
+        data = getattr(response, "data", [])
+        models = [item.id for item in data if getattr(item, "id", None)]
+        return models, None
+    except Exception as exc:
+        return None, exc
+
+
+def _get_model_options(llm_provider, api_key, default_model):
+    if not api_key:
+        return [default_model], False, "No API key found in Streamlit secrets."
+
+    if llm_provider == "anthropic":
+        models, err = _fetch_anthropic_models(api_key)
+    else:
+        models, err = _fetch_openai_models(api_key)
+
+    if err or not models:
+        err_msg = str(err) if err else "No models returned from provider."
+        return [default_model], False, err_msg
+
+    unique_models = []
+    seen = set()
+    for model in models:
+        if model not in seen:
+            seen.add(model)
+            unique_models.append(model)
+
+    if default_model not in seen:
+        unique_models.insert(0, default_model)
+
+    return unique_models, True, None
 
 def check_password():
     """Returns True if the user entered the correct password"""
@@ -474,11 +537,21 @@ def main():
         if llm_provider == "anthropic"
         else app_defaults["model_name_openai"]
     )
-    model_name = sidebar.text_input("Model", value=default_model)
-    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
     
     api_key = get_api_key(llm_provider.upper())
     error_placeholder = sidebar.empty()
+    model_options, models_enabled, model_error = _get_model_options(llm_provider, api_key, default_model)
+    model_index = model_options.index(default_model) if default_model in model_options else 0
+    model_name = sidebar.selectbox(
+        "Model",
+        options=model_options,
+        index=model_index,
+        disabled=not models_enabled,
+    )
+    if not models_enabled:
+        sidebar.warning(f"Set valid API credentials. Debug: {model_error}")
+
+    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
 
     anthropic_api_key = None
     openai_api_key = None
