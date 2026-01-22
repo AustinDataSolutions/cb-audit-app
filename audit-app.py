@@ -14,7 +14,7 @@ from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit
 
 # Configure Streamlit page (must be the first Streamlit call)
-st.set_page_config(page_title="Enhanced Audit", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Automatic Audit", initial_sidebar_state="collapsed")
 
 def _fetch_anthropic_models(api_key):
     try:
