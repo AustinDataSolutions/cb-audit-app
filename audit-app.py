@@ -478,22 +478,22 @@ def main():
         else app_defaults["model_name_openai"]
     )
     model_name = sidebar.text_input("Model", value=default_model)
+    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
     
     api_key = get_api_key(llm_provider.upper())
     error_placeholder = sidebar.empty()
-    key_expander_open = not bool(api_key)
 
     anthropic_api_key = None
     openai_api_key = None
-    with sidebar.expander("API key", expanded=key_expander_open):
+    if use_manual_api_key:
         if llm_provider == "anthropic":
-            anthropic_api_key = st.text_input(
+            anthropic_api_key = sidebar.text_input(
                 "Anthropic API key",
                 type="password",
                 help="Uses ANTHROPIC_API_KEY from the environment if left blank.",
             )
         elif llm_provider == "openai":
-            openai_api_key = st.text_input(
+            openai_api_key = sidebar.text_input(
                 "OpenAI API key",
                 type="password",
                 help="Uses OPENAI_API_KEY from the environment if left blank.",
@@ -505,10 +505,11 @@ def main():
                 api_key = openai_api_key
 
     manual_key_present = False
-    if llm_provider == "anthropic":
-        manual_key_present = bool((anthropic_api_key or "").strip())
-    else:
-        manual_key_present = bool((openai_api_key or "").strip())
+    if use_manual_api_key:
+        if llm_provider == "anthropic":
+            manual_key_present = bool((anthropic_api_key or "").strip())
+        else:
+            manual_key_present = bool((openai_api_key or "").strip())
     if not (api_key or manual_key_present):
         error_placeholder.error(f"{llm_provider} API key not found; enter key below")
     else:
