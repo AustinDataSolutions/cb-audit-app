@@ -191,9 +191,6 @@ def _build_completed_filename(uploaded_file):
 #then peform the audit by sending sentences batched by category for rebiew by an LLM and return the completed audit
 # along with accuracy, summary of findings, and suggestions for improvement per category
 
-# Configure Streamlit page
-st.set_page_config(page_title="Enhanced Audit")
-
 def _get_node_field(element, field_name):
     value = element.get(field_name)
     if value is None:
