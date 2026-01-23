@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import importlib.util
 import re
 from io import BytesIO
@@ -257,7 +258,8 @@ def _build_completed_filename(uploaded_file):
         base = base[: -len("_sortable")]
     if not ext:
         ext = ".xlsx"
-    return f"{base}_completed{ext}"
+    date_suffix = datetime.now().strftime("%Y-%m-%d")
+    return f"{base}_completed_{date_suffix}{ext}"
 
 
 #This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
