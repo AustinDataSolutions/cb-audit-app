@@ -898,6 +898,7 @@ def main():
                 st.error(f"Audit failed: {exc}")
                 partial_bytes = st.session_state.get("partial_audit_bytes")
                 if partial_bytes:
+                    st.session_state["audit_output_bytes"] = partial_bytes
                     st.info("Partial audit results are available for download.")
             finally:
                 st.session_state["audit_in_progress"] = False
