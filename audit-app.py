@@ -838,7 +838,13 @@ def main():
                         # Update the download button with the latest partial results
                         partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_in_progress")
                         with download_container:
-                            _render_download_button(partial_bytes, partial_filename, f"download_in_progress_{id(partial_bytes)}")
+                            partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
+                            st.session_state["partial_download_counter"] = partial_download_counter
+                            _render_download_button(
+                                partial_bytes,
+                                partial_filename,
+                                f"download_in_progress_{partial_download_counter}",
+                            )
 
                     def _check_stop():
                         return st.session_state.get("audit_stop_requested", False)
@@ -886,6 +892,7 @@ def main():
                     download_container.empty()
                 st.session_state["audit_output_bytes"] = output_bytes
                 st.session_state["partial_audit_bytes"] = None
+                st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
                 st.session_state["summary_generation_pending"] = generate_summary
                 st.success("Audit complete.")
             except AuditStopRequested:
@@ -893,12 +900,20 @@ def main():
                 partial_bytes = st.session_state.get("partial_audit_bytes")
                 if partial_bytes:
                     st.session_state["audit_output_bytes"] = partial_bytes
+                    st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
                     st.info("Partial audit results are available for download.")
             except Exception as exc:
                 st.error(f"Audit failed: {exc}")
                 partial_bytes = st.session_state.get("partial_audit_bytes")
                 if partial_bytes:
                     st.session_state["audit_output_bytes"] = partial_bytes
+                    failed_filename = _build_completed_filename(uploaded_audit)
+                    if "_completed" in failed_filename:
+                        failed_filename = failed_filename.replace("_completed", "_partial")
+                    elif "_partial" not in failed_filename:
+                        base, ext = os.path.splitext(failed_filename)
+                        failed_filename = f"{base}_partial{ext}"
+                    st.session_state["audit_output_filename"] = failed_filename
                     st.info("Partial audit results are available for download.")
             finally:
                 st.session_state["audit_in_progress"] = False
@@ -1017,7 +1032,7 @@ def main():
     audit_output_bytes = st.session_state.get("audit_output_bytes")
     summary_pending = st.session_state.get("summary_generation_pending")
     if audit_output_bytes and not summary_pending:
-        completed_filename = _build_completed_filename(uploaded_audit)
+        completed_filename = st.session_state.get("audit_output_filename") or _build_completed_filename(uploaded_audit)
         st.download_button(
             label="Download completed audit (.xlsx)",
             data=audit_output_bytes,
