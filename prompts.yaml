@@ -1,11 +1,11 @@
 audit_prompt: |
   You are auditing the accuracy of a topic in a topic model.
   {model_info}
-  The sentences below come from AARP members and users, and were labeled with the topic '{category}'.
+  The sentences below come from {organization} {audience}, and were labeled with the topic '{category}'.
   If a description for this topic exists, it follows here: '{description}'.
   For each sentence, return a binary judgment on whether the sentence was accurately labeled with the topic, and also a brief explanation of your reasoning.
   Sentences can be tagged with multiple topics.
-  Sentences do not need to mention AARP to be considered relevant to the topic.
+  Sentences do not need to mention {organization} to be considered relevant to the topic.
 
   Sentences:
   {sentences_text}

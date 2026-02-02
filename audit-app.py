@@ -90,6 +90,12 @@ def _validate_api_key(llm_provider, api_key):
         return False, str(err)
     return True, None
 
+def get_org_and_audience():
+    organization = st.secrets.get("ORGANIZATION",  "the organization")
+    audience = st.secrets.get("AUDIENCE", "customers and users")
+
+    return organization, audience
+
 def check_password():
     """Returns True if the user entered the correct password"""
 
@@ -366,6 +372,14 @@ def get_api_key(provider="ANTHROPIC"):
 
 def main():
     # st.cache_data.clear()
+
+    organization, audience = get_org_and_audience()
+
+    # org_for_title = ""
+    # if organzation != "the organization":
+    #     org_for_title =  organization
+    #TODO: Add organization into app title
+
     st.title("Automatic Audit")
     st.write("This app uses an LLM to audit the accuracy of CX Designer models, and provides a summary of the findings by category.")
     if "audit_in_progress" not in st.session_state:
@@ -519,7 +533,7 @@ def main():
         max_chars=1000, 
         value=audit_defaults["model_info"],
         help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
-        placeholder="This model captures feedback about AARP Rewards, a gamified loyalty platform ..."
+        placeholder="This model captures feedback about the loyalty program..."
         )
 
     with st.expander("Audit prompt"):
