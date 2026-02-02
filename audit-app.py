@@ -518,16 +518,20 @@ def main():
         if tree_busy:
             st.caption("Topic selection is temporarily disabled while an audit is running or queued.")
 
-        tree_state = tree_select(
-            model_data["tree_nodes"],
-            checked=st.session_state.get("topics_to_audit", []),
-            key="topics_tree",
-            disabled=tree_busy,
-        )
+        @st.fragment
+        def _render_tree():
+            tree_state = tree_select(
+                model_data["tree_nodes"],
+                checked=st.session_state.get("topics_to_audit", []),
+                key="topics_tree",
+                disabled=tree_busy,
+            )
 
-        # Only update selected topics if not busy (prevent changes during audit)
-        if not tree_busy:
-            st.session_state["topics_to_audit"] = tree_state.get("checked", [])
+            # Only update selected topics if not busy (prevent changes during audit)
+            if not tree_busy:
+                st.session_state["topics_to_audit"] = tree_state.get("checked", [])
+
+        _render_tree()
 
     st.subheader("Add context")
     st.write("Write a short description of the model you're auditing to aid the LLM's understanding.")
