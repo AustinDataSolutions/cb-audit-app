@@ -532,7 +532,7 @@ def main():
         max_chars=1000, 
         value=audit_defaults["model_info"],
         help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
-        placeholder="This model captures feedback about the loyalty program..."
+        placeholder=f"This model categorizes feedback about the {organization} loyalty program..."
         )
 
     with st.expander("Audit prompt"):
