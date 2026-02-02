@@ -54,7 +54,7 @@ def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
 
 def _add_model_average_row(ws_categories):
     ws_categories.insert_rows(2)
-    ws_categories.cell(row=2, column=1, value="MODEL AVERAGE")
+    ws_categories.cell(row=2, column=1, value="AVERAGE")
     last_row = ws_categories.max_row
     average_cell = ws_categories.cell(row=2, column=3)
     average_cell.value = f"=AVERAGE(C3:C{last_row})"
@@ -465,7 +465,7 @@ def _load_existing_audit_data(audit_bytes):
                     explanation if explanation else "",
                 ))
 
-        # Load findings (skip MODEL AVERAGE row)
+        # Load findings (skip AVERAGE row)
         findings_sheet = None
         for name in ["Findings", "Topics"]:
             if name in wb.sheetnames:
@@ -479,7 +479,7 @@ def _load_existing_audit_data(audit_bytes):
                 if topic is None:
                     continue
                 topic_str = str(topic).strip()
-                if topic_str.upper() == "MODEL AVERAGE":
+                if topic_str.upper() == "AVERAGE":
                     continue
                 description = ws.cell(row=row_idx, column=2).value
                 result["findings_by_category"][topic_str] = description if description else ""
@@ -642,7 +642,7 @@ def run_audit(
         """Save current workbook state and return bytes."""
         added_model_avg = False
         if ws_findings.max_row > 1:
-            # Temporarily add model average row for the partial output
+            # Temporarily add average row for the partial output
             _add_model_average_row(ws_findings)
             _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
             added_model_avg = True
@@ -652,7 +652,7 @@ def run_audit(
         wb.save(temp_output)
         temp_output.seek(0)
         result = temp_output.getvalue()
-        # Remove the temporarily added model average row
+        # Remove the temporarily added average row
         if added_model_avg:
             ws_findings.delete_rows(2)
         return result

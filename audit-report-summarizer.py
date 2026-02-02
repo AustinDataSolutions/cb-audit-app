@@ -338,7 +338,7 @@ def summarize_audit_report(
         topic_text = str(topic_value).strip()
         if not topic_text:
             continue
-        if topic_text.casefold() == "model average":
+        if topic_text.casefold() == "average":
             continue
         topic_key = _topic_key(topic_text)
         if topic_key in issues_by_key:
