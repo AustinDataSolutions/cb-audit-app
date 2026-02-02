@@ -376,7 +376,7 @@ def main():
     organization, audience = get_org_and_audience()
 
     org_for_title = ""
-    if organzation != "the organization":
+    if organization != "the organization":
         org_for_title = organization + " "
 
     st.title(f"{org_for_title}Automatic Audit")
