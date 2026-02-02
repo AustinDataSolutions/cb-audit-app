@@ -375,12 +375,11 @@ def main():
 
     organization, audience = get_org_and_audience()
 
-    # org_for_title = ""
-    # if organzation != "the organization":
-    #     org_for_title =  organization
-    #TODO: Add organization into app title
+    org_for_title = ""
+    if organzation != "the organization":
+        org_for_title = organization + " "
 
-    st.title("Automatic Audit")
+    st.title(f"{org_for_title}Automatic Audit")
     st.write("This app uses an LLM to audit the accuracy of CX Designer models, and provides a summary of the findings by category.")
     if "audit_in_progress" not in st.session_state:
         st.session_state["audit_in_progress"] = False
