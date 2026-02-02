@@ -497,6 +497,8 @@ def run_audit(
     llm_provider,
     model_name=None,
     model_info="",
+    organization="the organization",
+    audience="feedback",
     max_categories=DEFAULT_MAX_CATEGORIES,
     max_sentences_per_category=DEFAULT_MAX_SENTENCES_PER_CATEGORY,
     model_tree_bytes=None,
@@ -693,6 +695,8 @@ def run_audit(
             description=description,
             sentences_text=sentences_text,
             model_info=model_info or "",
+            organization=organization,
+            audience=audience,
         )
 
         # log_fn(f"Sending message to LLM for category {category}...")
@@ -779,6 +783,8 @@ def run_audit_from_config():
             DEFAULT_MAX_SENTENCES_PER_CATEGORY,
         )
         max_tokens = audit_config.get('max_tokens', DEFAULT_MAX_TOKENS)
+        organization = audit_config.get('organization', 'the organization')
+        audience = audit_config.get('audience', 'feedback')
         msg_template = prompts.get('audit_prompt', '')
         audit_file_name = audit_config.get('audit_file')
         model_tree_file = audit_config.get('model_tree')
@@ -900,6 +906,8 @@ def run_audit_from_config():
             category=category,
             description=description,
             sentences_text=sentences_text,
+            organization=organization,
+            audience=audience,
         )
 
         print(f"Sending message to LLM for category {category}...")
