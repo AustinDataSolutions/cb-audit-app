@@ -562,12 +562,12 @@ def run_audit(
             else:
                 unmatched_topics.append(topic)
 
-        if unmatched_topics:
-            unmatched_list = "\n".join(f"- {topic}" for topic in unmatched_topics)
-            warn_fn(
-                "Warning: Sentences for some categories not found in audit file.\n"
-                f"{unmatched_list}"
-            )
+        # if unmatched_topics:
+        #     unmatched_list = "\n".join(f"- {topic}" for topic in unmatched_topics)
+        #     warn_fn(
+        #         "Warning: Sentences for some categories not found in audit file.\n"
+        #         f"{unmatched_list}"
+        #     )
 
         if filtered_categories:
             categories_to_audit = filtered_categories
