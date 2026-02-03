@@ -512,7 +512,7 @@ def main():
 
         tree_busy = st.session_state.get("audit_in_progress", False) or st.session_state.get("audit_run_requested", False)
         if tree_busy:
-            st.caption("Topic selection is temporarily disabled while an audit is running or queued.")
+            st.caption("Topic selection is disabled while an audit is running.")
 
         @st.fragment
         def _render_tree():
@@ -551,7 +551,7 @@ def main():
         )
 
     sidebar = st.sidebar
-    sidebar.subheader("API Settings")
+    sidebar.subheader("LLM Settings")
     llm_provider_options = ["anthropic", "openai"]
     default_provider = app_defaults["llm_provider"]
     provider_index = (
@@ -567,7 +567,7 @@ def main():
     manual_key_provider = st.session_state.get("manual_api_key_provider")
 
     llm_provider = sidebar.selectbox(
-        "LLM provider",
+        "Provider",
         options=llm_provider_options,
         index=provider_index,
         disabled=use_manual_api_key and not manual_key_valid,
@@ -656,7 +656,7 @@ def main():
         else:
             error_placeholder.empty()
 
-    sidebar.subheader("API limits", help="Set limits to prevent overspending with LLMs")
+    sidebar.subheader("API limits", help="Adjust values to override maximum LLM spend")
     max_categories = sidebar.number_input(
         "Max categories to audit",
         min_value=1,
