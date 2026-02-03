@@ -559,7 +559,9 @@ def main():
         if default_provider in llm_provider_options
         else 0
     )
-    use_manual_api_key = sidebar.checkbox("Use my own API key", value=False)
+    
+    #use_manual_api_key = sidebar.checkbox("Use my own API key", value=False, help="Override default API connection and ")
+    use_manual_api_key = False
 
     manual_key_valid = st.session_state.get("manual_api_key_valid", False)
     manual_key_provider = st.session_state.get("manual_api_key_provider")
