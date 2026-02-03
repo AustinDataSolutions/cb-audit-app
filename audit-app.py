@@ -14,6 +14,8 @@ from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit
 
+# Main script for streamlit app that uses LLMs to conduct audits of Clarabridge topic models
+
 # Configure Streamlit page (must be the first Streamlit call)
 st.set_page_config(page_title="Automatic Audit", initial_sidebar_state="collapsed")
 
@@ -267,13 +269,6 @@ def _build_completed_filename(uploaded_file):
     date_suffix = datetime.now().strftime("%Y-%m-%d")
     return f"{base}_completed_{date_suffix}{ext}"
 
-
-#This script is intended to be an end-to-end audit of Clarabridge topic models powered by LLMs
-#It will start with uploading the audit output from Qualtrics and reformatting it for transformation,
-#then will present the user an interface to allow them to select what part of the model they want audited,
-#then peform the audit by sending sentences batched by category for rebiew by an LLM and return the completed audit
-# along with accuracy, summary of findings, and suggestions for improvement per category
-
 def _get_node_field(element, field_name):
     value = element.get(field_name)
     if value is None:
@@ -429,6 +424,7 @@ def main():
                 f"and any incomplete category will be re-audited entirely."
             )
 
+        # Reformat functionality
         # with st.expander("Reformat audit (optional)"):
         #     st.write("Download a sortable version of the input file.")
         #     if st.button("Reformat audit", help="Optionally reformatted audit for review prior to processing"):
@@ -1067,16 +1063,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-#TODO: pull together extra category info to send do the LLM, e.g. full category tree, category description
-
-#TODO: send the sentences to the LLM to judge and return judgments
-
-#TODO: Also have the LLM summarize the main issues by category and suggest rules improvements
-
-#TODO: assemble audited sentences back into a spreadsheet
-
-#TODO: set up the spreadsheet to report category accuracy
-
-#TODO: output spreadsheet
