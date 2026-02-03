@@ -529,6 +529,8 @@ def main():
 
         _render_tree()
 
+        st.write("Note: Topics with no rules will not appear in audit output, even if selected in model tree.")
+
     st.subheader("Add context")
     st.write("Write a short description of the model you're auditing to aid the LLM's understanding.")
     model_info = st.text_area(
