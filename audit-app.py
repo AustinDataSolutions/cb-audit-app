@@ -404,6 +404,7 @@ def main():
             st.session_state["audit_source_name"] = uploaded_audit.name
             st.session_state.pop("reformatted_audit_bytes", None)
             st.session_state.pop("audit_output_bytes", None)
+            st.session_state.pop("audit_is_partial", None)
             st.session_state.pop("partial_audit_detection", None)
 
         # Detect if this is a partial audit file
@@ -918,6 +919,7 @@ def main():
                 st.session_state["audit_output_bytes"] = output_bytes
                 st.session_state["partial_audit_bytes"] = None
                 st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
+                st.session_state["audit_is_partial"] = False
                 st.session_state["summary_generation_pending"] = generate_summary
                 st.success("Audit complete.")
             except AuditStopRequested:
@@ -926,6 +928,7 @@ def main():
                 if partial_bytes:
                     st.session_state["audit_output_bytes"] = partial_bytes
                     st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
+                    st.session_state["audit_is_partial"] = True
                     st.info("Partial audit results are available for download.")
             except Exception as exc:
                 st.error(f"Audit failed: {exc}")
@@ -939,6 +942,7 @@ def main():
                         base, ext = os.path.splitext(failed_filename)
                         failed_filename = f"{base}_partial{ext}"
                     st.session_state["audit_output_filename"] = failed_filename
+                    st.session_state["audit_is_partial"] = True
                     st.info(
                         "Partial audit results are available for download. "
                         "You can re-upload the in-progress file to continue the audit where it left off."
@@ -1065,9 +1069,11 @@ def main():
     audit_output_bytes = st.session_state.get("audit_output_bytes")
     summary_pending = st.session_state.get("summary_generation_pending")
     if audit_output_bytes and not summary_pending:
+        is_partial = st.session_state.get("audit_is_partial", False)
+        download_label = "Download in-progress audit (.xlsx)" if is_partial else "Download completed audit (.xlsx)"
         completed_filename = st.session_state.get("audit_output_filename") or _build_completed_filename(uploaded_audit)
         st.download_button(
-            label="Download completed audit (.xlsx)",
+            label=download_label,
             data=audit_output_bytes,
             file_name=completed_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
