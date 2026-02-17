@@ -4,6 +4,7 @@ from io import BytesIO
 from datetime import datetime
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 
 import anthropic
@@ -491,6 +492,17 @@ def _load_existing_audit_data(audit_bytes):
     return result
 
 
+def _is_retryable_llm_error(exc):
+    """Return True if the exception is a transient LLM API error worth retrying."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status in (429, 529, 503):
+        return True
+    msg = str(exc).lower()
+    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable")):
+        return True
+    return False
+
+
 def run_audit(
     audit_excel_bytes,
     prompt_template,
@@ -701,32 +713,48 @@ def run_audit(
 
         # log_fn(f"Sending message to LLM for category {category}...")
 
-        try:
-            if llm_provider == 'anthropic':
-                message = client.messages.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = message.content[0].text
-            elif llm_provider == 'openai':
-                response = client.chat.completions.create(
-                    model=model_name,
-                    max_completion_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = response.choices[0].message.content
-            else:
-                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
-        except Exception as e:
-            # Save progress before re-raising the exception
-            if save_progress_fn:
-                save_progress_fn(_save_current_workbook())
-            raise
+        retry_delays = [30, 60, 120]
+        response_text = None
+        for attempt in range(len(retry_delays) + 1):
+            try:
+                if llm_provider == 'anthropic':
+                    message = client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        messages=[
+                            {"role": "user", "content": message_content}
+                        ]
+                    )
+                    response_text = message.content[0].text
+                elif llm_provider == 'openai':
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        max_completion_tokens=max_tokens,
+                        messages=[
+                            {"role": "user", "content": message_content}
+                        ]
+                    )
+                    response_text = response.choices[0].message.content
+                else:
+                    raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+                break  # Success, exit retry loop
+            except Exception as e:
+                is_retryable = _is_retryable_llm_error(e)
+                if is_retryable and attempt < len(retry_delays):
+                    delay = retry_delays[attempt]
+                    if log_fn:
+                        log_fn(
+                            f"LLM API returned a retryable error (attempt {attempt + 1}/{len(retry_delays) + 1}). "
+                            f"Retrying in {delay} seconds..."
+                        )
+                    if save_progress_fn:
+                        save_progress_fn(_save_current_workbook())
+                    time.sleep(delay)
+                    continue
+                # Non-retryable error or exhausted retries — save progress and re-raise
+                if save_progress_fn:
+                    save_progress_fn(_save_current_workbook())
+                raise
 
         nlp_results = _parse_llm_response(response_text)
 

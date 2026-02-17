@@ -12,7 +12,7 @@ import hmac
 import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
-from audit import run_audit, AuditStopRequested, detect_partial_audit
+from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error
 
 # Main script for streamlit app that uses LLMs to conduct audits of Clarabridge topic models
 
@@ -939,7 +939,15 @@ def main():
                         base, ext = os.path.splitext(failed_filename)
                         failed_filename = f"{base}_partial{ext}"
                     st.session_state["audit_output_filename"] = failed_filename
-                    st.info("Partial audit results are available for download.")
+                    st.info(
+                        "Partial audit results are available for download. "
+                        "You can re-upload the in-progress file to continue the audit where it left off."
+                    )
+                if _is_retryable_llm_error(exc):
+                    st.warning(
+                        "This error was caused by the LLM API being overloaded or rate-limited. "
+                        "You can try again later, or select a different model or provider in the left sidebar."
+                    )
             finally:
                 st.session_state["audit_in_progress"] = False
 
