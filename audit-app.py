@@ -792,6 +792,20 @@ def main():
                 key="accuracy_threshold",
             )
 
+    # Determine if we will run the audit this pass, so we can show the correct button
+    should_run_audit = (
+        st.session_state.get("audit_run_requested", False)
+        and not st.session_state.get("audit_in_progress", False)
+        and can_run_audit
+    )
+    if should_run_audit:
+        # Mark in-progress immediately so the button renders as "Stop audit"
+        st.session_state["audit_in_progress"] = True
+        st.session_state["audit_run_requested"] = False
+        st.session_state["summary_generation_pending"] = False
+    elif st.session_state.get("audit_run_requested", False) and not can_run_audit:
+        st.session_state["audit_run_requested"] = False
+
     if st.session_state.get("audit_in_progress", False):
         st.button(
             "Stop audit",
@@ -806,164 +820,155 @@ def main():
             help=run_help,
             on_click=_queue_audit_run,
         )
-    should_run_audit = (
-        st.session_state.get("audit_run_requested", False) and not st.session_state.get("audit_in_progress", False)
-    )
+
     if should_run_audit:
-        if not can_run_audit:
-            st.session_state["audit_run_requested"] = False
-        else:
-            st.session_state["audit_run_requested"] = False
-            st.session_state["summary_generation_pending"] = False
+        partial_detection = st.session_state.get("partial_audit_detection", {})
+        is_partial_audit = partial_detection.get("is_partial", False)
 
-            partial_detection = st.session_state.get("partial_audit_detection", {})
-            is_partial_audit = partial_detection.get("is_partial", False)
+        audit_bytes = st.session_state.get("reformatted_audit_bytes")
 
-            audit_bytes = st.session_state.get("reformatted_audit_bytes")
-
-            if not audit_bytes:
-                if uploaded_audit is None:
-                    st.error("Please upload an audit file before running the audit.")
-                    st.session_state["audit_in_progress"] = False
-                    return
-                # For partial audits, skip reformatting - the file is already in our format
-                if is_partial_audit:
-                    audit_bytes = uploaded_audit.getvalue()
-                    st.session_state["reformatted_audit_bytes"] = audit_bytes
-                else:
-                    with st.spinner("Reformatting audit..."):
-                        output, _, warnings = handle_audit_reformat(uploaded_audit)
-                        if warnings:
-                            st.warning("Input audit file warnings:\n" + "\n".join(warnings))
-                        st.session_state["reformatted_audit_bytes"] = output.getvalue()
-                        audit_bytes = st.session_state["reformatted_audit_bytes"]
-
-            if not model_tree and not st.session_state.get("topics_to_audit"):
-                topics_to_audit = None
-            else:
-                topics_to_audit = st.session_state.get("topics_to_audit")
-
-            st.session_state["audit_in_progress"] = True
-            try:
-                with st.spinner("Running audit..."):
-                    progress_container = st.container()
-                    progress_text = progress_container.empty()
-                    progress_bar = progress_container.progress(0)
-                    download_container = progress_container.empty()
-
-                    def _update_progress(current, total, category_name):
-                        progress_text.write(
-                            f"Auditing category {current} of {total}: {category_name}"
-                        )
-                        progress_bar.progress(current / total if total else 0)
-
-                    @st.fragment
-                    def _render_download_button(partial_bytes, partial_filename, button_key):
-                        st.download_button(
-                            label="Download in-progress audit (.xlsx)",
-                            data=partial_bytes,
-                            file_name=partial_filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=button_key,
-                        )
-
-                    def _save_progress(partial_bytes):
-                        st.session_state["partial_audit_bytes"] = partial_bytes
-                        # Update the download button with the latest partial results
-                        partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_in_progress")
-                        with download_container:
-                            partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
-                            st.session_state["partial_download_counter"] = partial_download_counter
-                            _render_download_button(
-                                partial_bytes,
-                                partial_filename,
-                                f"download_in_progress_{partial_download_counter}",
-                            )
-
-                    def _check_stop():
-                        return st.session_state.get("audit_stop_requested", False)
-
-                    if use_manual_api_key:
-                        final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
-                        final_openai_key = openai_api_key if llm_provider == "openai" else None
-                    else:
-                        final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
-                        final_openai_key = api_key if llm_provider == "openai" and api_key else None
-
-                    # Check for partial audit resume
-                    partial_detection = st.session_state.get("partial_audit_detection", {})
-                    existing_audit_bytes = None
-                    completed_categories = None
-                    if partial_detection.get("is_partial"):
-                        existing_audit_bytes = uploaded_audit.getvalue()
-                        # Completed categories are those fully judged; incomplete ones will be re-audited
-                        completed_categories = partial_detection.get("completed_categories", set())
-
-                    output_bytes = run_audit(
-                        audit_excel_bytes=audit_bytes,
-                        prompt_template=audit_prompt,
-                        llm_provider=llm_provider,
-                        model_name=model_name,
-                        model_info=model_info,
-                        organization=organization,
-                        audience=audience,
-                        max_categories=int(max_categories),
-                        max_sentences_per_category=int(max_sentences),
-                        model_tree_bytes=model_tree.getvalue() if model_tree else None,
-                        topics_to_audit=topics_to_audit,
-                        anthropic_api_key=final_anthropic_key,
-                        openai_api_key=final_openai_key,
-                        max_tokens=int(max_tokens),
-                        log_fn=st.write,
-                        warn_fn=st.warning,
-                        progress_fn=_update_progress,
-                        save_progress_fn=_save_progress,
-                        check_stop_fn=_check_stop,
-                        existing_audit_bytes=existing_audit_bytes,
-                        completed_categories=completed_categories,
-                    )
-                    progress_bar.progress(1.0)
-                    progress_text.empty()
-                    progress_bar.empty()
-                    download_container.empty()
-                st.session_state["audit_output_bytes"] = output_bytes
-                st.session_state["partial_audit_bytes"] = None
-                st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
-                st.session_state["audit_is_partial"] = False
-                st.session_state["summary_generation_pending"] = generate_summary
-                st.success("Audit complete.")
-            except AuditStopRequested:
-                st.warning("Audit stopped by user request.")
-                partial_bytes = st.session_state.get("partial_audit_bytes")
-                if partial_bytes:
-                    st.session_state["audit_output_bytes"] = partial_bytes
-                    st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
-                    st.session_state["audit_is_partial"] = True
-                    st.info("Partial audit results are available for download.")
-            except Exception as exc:
-                st.error(f"Audit failed: {exc}")
-                partial_bytes = st.session_state.get("partial_audit_bytes")
-                if partial_bytes:
-                    st.session_state["audit_output_bytes"] = partial_bytes
-                    failed_filename = _build_completed_filename(uploaded_audit)
-                    if "_completed" in failed_filename:
-                        failed_filename = failed_filename.replace("_completed", "_partial")
-                    elif "_partial" not in failed_filename:
-                        base, ext = os.path.splitext(failed_filename)
-                        failed_filename = f"{base}_partial{ext}"
-                    st.session_state["audit_output_filename"] = failed_filename
-                    st.session_state["audit_is_partial"] = True
-                    st.info(
-                        "Partial audit results are available for download. "
-                        "You can re-upload the in-progress file to continue the audit where it left off."
-                    )
-                if _is_retryable_llm_error(exc):
-                    st.warning(
-                        "This error was caused by the LLM API being overloaded or rate-limited. "
-                        "You can try again later, or select a different model or provider in the left sidebar."
-                    )
-            finally:
+        if not audit_bytes:
+            if uploaded_audit is None:
+                st.error("Please upload an audit file before running the audit.")
                 st.session_state["audit_in_progress"] = False
+                return
+            # For partial audits, skip reformatting - the file is already in our format
+            if is_partial_audit:
+                audit_bytes = uploaded_audit.getvalue()
+                st.session_state["reformatted_audit_bytes"] = audit_bytes
+            else:
+                with st.spinner("Reformatting audit..."):
+                    output, _, warnings = handle_audit_reformat(uploaded_audit)
+                    if warnings:
+                        st.warning("Input audit file warnings:\n" + "\n".join(warnings))
+                    st.session_state["reformatted_audit_bytes"] = output.getvalue()
+                    audit_bytes = st.session_state["reformatted_audit_bytes"]
+
+        if not model_tree and not st.session_state.get("topics_to_audit"):
+            topics_to_audit = None
+        else:
+            topics_to_audit = st.session_state.get("topics_to_audit")
+
+        try:
+            with st.spinner("Running audit..."):
+                progress_container = st.container()
+                progress_text = progress_container.empty()
+                progress_bar = progress_container.progress(0)
+                download_container = progress_container.empty()
+
+                def _update_progress(current, total, category_name):
+                    progress_text.write(
+                        f"Auditing category {current} of {total}: {category_name}"
+                    )
+                    progress_bar.progress(current / total if total else 0)
+
+                @st.fragment
+                def _render_download_button(partial_bytes, partial_filename, button_key):
+                    st.download_button(
+                        label="Download in-progress audit (.xlsx)",
+                        data=partial_bytes,
+                        file_name=partial_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=button_key,
+                    )
+
+                def _save_progress(partial_bytes):
+                    st.session_state["partial_audit_bytes"] = partial_bytes
+                    # Update the download button with the latest partial results
+                    partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_in_progress")
+                    with download_container:
+                        partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
+                        st.session_state["partial_download_counter"] = partial_download_counter
+                        _render_download_button(
+                            partial_bytes,
+                            partial_filename,
+                            f"download_in_progress_{partial_download_counter}",
+                        )
+
+                def _check_stop():
+                    return st.session_state.get("audit_stop_requested", False)
+
+                if use_manual_api_key:
+                    final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
+                    final_openai_key = openai_api_key if llm_provider == "openai" else None
+                else:
+                    final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
+                    final_openai_key = api_key if llm_provider == "openai" and api_key else None
+
+                # Check for partial audit resume
+                partial_detection = st.session_state.get("partial_audit_detection", {})
+                existing_audit_bytes = None
+                completed_categories = None
+                if partial_detection.get("is_partial"):
+                    existing_audit_bytes = uploaded_audit.getvalue()
+                    # Completed categories are those fully judged; incomplete ones will be re-audited
+                    completed_categories = partial_detection.get("completed_categories", set())
+
+                output_bytes = run_audit(
+                    audit_excel_bytes=audit_bytes,
+                    prompt_template=audit_prompt,
+                    llm_provider=llm_provider,
+                    model_name=model_name,
+                    model_info=model_info,
+                    organization=organization,
+                    audience=audience,
+                    max_categories=int(max_categories),
+                    max_sentences_per_category=int(max_sentences),
+                    model_tree_bytes=model_tree.getvalue() if model_tree else None,
+                    topics_to_audit=topics_to_audit,
+                    anthropic_api_key=final_anthropic_key,
+                    openai_api_key=final_openai_key,
+                    max_tokens=int(max_tokens),
+                    log_fn=st.write,
+                    warn_fn=st.warning,
+                    progress_fn=_update_progress,
+                    save_progress_fn=_save_progress,
+                    check_stop_fn=_check_stop,
+                    existing_audit_bytes=existing_audit_bytes,
+                    completed_categories=completed_categories,
+                )
+                progress_bar.progress(1.0)
+                progress_text.empty()
+                progress_bar.empty()
+                download_container.empty()
+            st.session_state["audit_output_bytes"] = output_bytes
+            st.session_state["partial_audit_bytes"] = None
+            st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
+            st.session_state["audit_is_partial"] = False
+            st.session_state["summary_generation_pending"] = generate_summary
+            st.success("Audit complete.")
+        except AuditStopRequested:
+            st.warning("Audit stopped by user request.")
+            partial_bytes = st.session_state.get("partial_audit_bytes")
+            if partial_bytes:
+                st.session_state["audit_output_bytes"] = partial_bytes
+                st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
+                st.session_state["audit_is_partial"] = True
+                st.info("Partial audit results are available for download.")
+        except Exception as exc:
+            st.error(f"Audit failed: {exc}")
+            partial_bytes = st.session_state.get("partial_audit_bytes")
+            if partial_bytes:
+                st.session_state["audit_output_bytes"] = partial_bytes
+                failed_filename = _build_completed_filename(uploaded_audit)
+                if "_completed" in failed_filename:
+                    failed_filename = failed_filename.replace("_completed", "_partial")
+                elif "_partial" not in failed_filename:
+                    base, ext = os.path.splitext(failed_filename)
+                    failed_filename = f"{base}_partial{ext}"
+                st.session_state["audit_output_filename"] = failed_filename
+                st.session_state["audit_is_partial"] = True
+                st.info(
+                    "Partial audit results are available for download. "
+                    "You can re-upload the in-progress file to continue the audit where it left off."
+                )
+            if _is_retryable_llm_error(exc):
+                st.warning(
+                    "This error was caused by the LLM API being overloaded or rate-limited. "
+                    "You can try again later, or select a different model or provider in the left sidebar."
+                )
+        finally:
+            st.session_state["audit_in_progress"] = False
 
     audit_output_bytes = st.session_state.get("audit_output_bytes")
     summary_prompt = st.session_state.get("summary_prompt", summary_prompt_default)
