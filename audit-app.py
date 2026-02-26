@@ -730,8 +730,11 @@ def main():
 
             total_categories = len(categories_to_audit)
             if total_categories and int(max_categories) < total_categories:
+                skipped = total_categories - int(max_categories)
                 audit_warnings.append(
-                    f"Max categories to audit is {int(max_categories)}, but the input has {total_categories} categories to audit."
+                    f"The input has {total_categories} categories but the max is set to {int(max_categories)}. "
+                    f"{skipped} categories will be skipped entirely. "
+                    f"Adjust \"Max categories to audit\" in the sidebar to change this."
                 )
 
             if categories_to_audit:
