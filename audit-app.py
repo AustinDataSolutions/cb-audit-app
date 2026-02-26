@@ -387,10 +387,29 @@ def main():
     if "summary_stop_requested" not in st.session_state:
         st.session_state["summary_stop_requested"] = False
 
+    if "warnings_acknowledged" not in st.session_state:
+        st.session_state["warnings_acknowledged"] = False
+
     def _queue_audit_run():
         st.session_state["audit_run_requested"] = True
         st.session_state["partial_audit_bytes"] = None
         st.session_state["audit_stop_requested"] = False
+
+    def _queue_audit_run_with_warning_check():
+        """Request audit, but if there are pre-flight warnings, require confirmation first."""
+        if audit_warnings and not st.session_state.get("warnings_acknowledged", False):
+            st.session_state["warnings_confirmation_needed"] = True
+        else:
+            st.session_state["warnings_acknowledged"] = False
+            _queue_audit_run()
+
+    def _acknowledge_warnings():
+        st.session_state["warnings_acknowledged"] = True
+        st.session_state["warnings_confirmation_needed"] = False
+        _queue_audit_run()
+
+    def _cancel_warnings():
+        st.session_state["warnings_confirmation_needed"] = False
 
     def _request_audit_stop():
         st.session_state["audit_stop_requested"] = True
@@ -409,6 +428,8 @@ def main():
             st.session_state.pop("audit_output_bytes", None)
             st.session_state.pop("audit_is_partial", None)
             st.session_state.pop("partial_audit_detection", None)
+            st.session_state["warnings_acknowledged"] = False
+            st.session_state["warnings_confirmation_needed"] = False
 
         # Detect if this is a partial audit file
         if "partial_audit_detection" not in st.session_state:
@@ -821,13 +842,28 @@ def main():
             type="secondary",
             on_click=_request_audit_stop,
         )
+    elif st.session_state.get("warnings_confirmation_needed", False):
+        st.warning("Please review the warnings above before proceeding.")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.button(
+                "Continue anyway",
+                type="primary",
+                on_click=_acknowledge_warnings,
+            )
+        with col2:
+            st.button(
+                "Cancel",
+                type="secondary",
+                on_click=_cancel_warnings,
+            )
     else:
         st.button(
             "Run audit",
             type="primary",
             disabled=not can_run_audit,
             help=run_help,
-            on_click=_queue_audit_run,
+            on_click=_queue_audit_run_with_warning_check,
         )
 
     if should_run_audit:
