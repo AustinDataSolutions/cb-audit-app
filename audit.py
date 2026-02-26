@@ -686,24 +686,27 @@ def run_audit(
     ws_settings = _ensure_settings_sheet(wb)
 
     settings = {
+        # Run metadata
         "Input File": audit_file_name or "",
+        "Model Tree File": model_tree_name or "(none)",
+        "Categories Selected": _format_categories_selected(topics_to_audit, len(categories_to_audit), total_category_count),
+        "Run Started": run_datetime or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Run Finished": "",
+        "Model Average Accuracy": "",
+        # Audit settings
+        "Max Categories": max_categories,
+        "Max Sentences per Category": max_sentences_per_category,
+        "Max Tokens per Request": max_tokens,
+        "Include Summary of Issues": "Yes" if include_summary else "No",
+        "Accuracy Threshold": accuracy_threshold if include_summary else "(n/a)",
+        # LLM configuration
         "LLM Provider": llm_provider,
         "Model": model_name,
         "Organization": organization,
         "Audience": audience,
         "Context": model_info or "",
-        "Model Tree File": model_tree_name or "(none)",
-        "Categories Selected": _format_categories_selected(topics_to_audit, len(categories_to_audit), total_category_count),
         "Audit Prompt": prompt_template,
-        "Include Summary of Issues": "Yes" if include_summary else "No",
         "Summary Prompt": summary_prompt if include_summary else "(n/a)",
-        "Accuracy Threshold": accuracy_threshold if include_summary else "(n/a)",
-        "Max Categories": max_categories,
-        "Max Sentences per Category": max_sentences_per_category,
-        "Max Tokens per Request": max_tokens,
-        "Run Started": run_datetime or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Run Finished": "",
-        "Model Average Accuracy": "",
     }
     _write_settings_sheet(ws_settings, settings)
 
