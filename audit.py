@@ -31,8 +31,10 @@ COLUMN_WIDTH_PX = 300
 COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
 FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
 SENTENCES_HEADERS = ["ID", "Sentence", "Topic", "Audit", "Explanation"]
+SETTINGS_HEADERS = ["Setting", "Value"]
 FINDINGS_WRAP_COLUMNS = (1, 2, 4)
 SENTENCES_WRAP_COLUMNS = (2, 3, 5)
+SETTINGS_WRAP_COLUMNS = (1, 2)
 HEADER_FONT = Font(bold=True)
 HEADER_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
@@ -148,6 +150,30 @@ def _ensure_sentences_sheet(wb):
     _apply_alignment_to_columns(ws, SENTENCES_WRAP_COLUMNS)
     ws.freeze_panes = "A2"
     return ws
+
+
+def _ensure_settings_sheet(wb):
+    if "Audit Settings" in wb.sheetnames:
+        ws = wb["Audit Settings"]
+    else:
+        ws = wb.create_sheet(title="Audit Settings")
+
+    _ensure_headers(ws, SETTINGS_HEADERS)
+    _apply_header_style(ws, len(SETTINGS_HEADERS))
+    _set_column_widths(ws, SETTINGS_WRAP_COLUMNS)
+    _apply_alignment_to_columns(ws, SETTINGS_WRAP_COLUMNS)
+    ws.freeze_panes = "A2"
+    return ws
+
+
+def _write_settings_sheet(ws, settings):
+    """Write key-value settings to the Audit Settings sheet, replacing any existing data."""
+    # Clear existing data rows (keep header)
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)
+    for key, value in settings.items():
+        ws.append([key, value])
+        _apply_alignment_to_row(ws, ws.max_row, SETTINGS_WRAP_COLUMNS)
 
 
 def _load_yaml(path):
@@ -604,6 +630,17 @@ def run_audit(
     wb = Workbook()
     ws_findings = _ensure_findings_sheet(wb)
     ws_sentences = _ensure_sentences_sheet(wb)
+    ws_settings = _ensure_settings_sheet(wb)
+
+    _write_settings_sheet(ws_settings, {
+        "LLM Provider": llm_provider,
+        "Model": model_name,
+        "Max Categories": max_categories,
+        "Max Sentences per Category": max_sentences_per_category,
+        "Max Tokens per Request": max_tokens,
+        "Organization": organization,
+        "Audience": audience,
+    })
 
     # Track which categories need LLM auditing vs already completed
     categories_needing_audit = []
