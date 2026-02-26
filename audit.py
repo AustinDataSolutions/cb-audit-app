@@ -32,9 +32,11 @@ COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
 FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
 SENTENCES_HEADERS = ["ID", "Sentence", "Topic", "Audit", "Explanation"]
 SETTINGS_HEADERS = ["Setting", "Value"]
+ERRORS_HEADERS = ["Type", "Message"]
 FINDINGS_WRAP_COLUMNS = (1, 2, 4)
 SENTENCES_WRAP_COLUMNS = (2, 3, 5)
 SETTINGS_WRAP_COLUMNS = (1, 2)
+ERRORS_WRAP_COLUMNS = (1, 2)
 HEADER_FONT = Font(bold=True)
 HEADER_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
@@ -171,6 +173,28 @@ def _ensure_settings_sheet(wb):
     _apply_alignment_to_columns(ws, SETTINGS_WRAP_COLUMNS)
     ws.freeze_panes = "A2"
     return ws
+
+
+def _write_errors_sheet(wb, collected_warnings):
+    """Create and populate the Errors sheet only if there are warnings to record."""
+    if not collected_warnings:
+        # Remove the sheet if it exists but there's nothing to write
+        if "Errors" in wb.sheetnames:
+            del wb["Errors"]
+        return
+    if "Errors" in wb.sheetnames:
+        ws = wb["Errors"]
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row - 1)
+    else:
+        ws = wb.create_sheet(title="Errors")
+    _ensure_headers(ws, ERRORS_HEADERS)
+    _apply_header_style(ws, len(ERRORS_HEADERS))
+    _set_column_widths(ws, ERRORS_WRAP_COLUMNS)
+    ws.freeze_panes = "A2"
+    for msg in collected_warnings:
+        ws.append(["Warning", msg])
+        _apply_alignment_to_row(ws, ws.max_row, ERRORS_WRAP_COLUMNS)
 
 
 def _write_settings_sheet(ws, settings):
@@ -674,9 +698,17 @@ def run_audit(
         "Max Tokens per Request": max_tokens,
         "Run Started": run_datetime or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Run Finished": "",
-        "Warnings": "\n".join(audit_warnings) if audit_warnings else "(none)",
     }
     _write_settings_sheet(ws_settings, settings)
+
+    # Collect all warnings (pre-flight + runtime) for the Errors sheet
+    collected_warnings = list(audit_warnings or [])
+
+    _original_warn_fn = warn_fn
+    def _collecting_warn_fn(msg):
+        collected_warnings.append(str(msg))
+        _original_warn_fn(msg)
+    warn_fn = _collecting_warn_fn
 
     # Track which categories need LLM auditing vs already completed
     categories_needing_audit = []
@@ -731,6 +763,7 @@ def run_audit(
             _add_model_average_row(ws_findings)
             _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
             added_model_avg = True
+        _write_errors_sheet(wb, collected_warnings)
         _refresh_auto_filter(ws_findings)
         _refresh_auto_filter(ws_sentences)
         temp_output = BytesIO()
@@ -854,6 +887,8 @@ def run_audit(
 
     # Record finish time
     _update_setting(ws_settings, "Run Finished", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    _write_errors_sheet(wb, collected_warnings)
 
     if ws_findings.max_row > 1:
         _add_model_average_row(ws_findings)
