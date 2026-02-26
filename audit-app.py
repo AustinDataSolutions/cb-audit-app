@@ -935,6 +935,12 @@ def main():
                     check_stop_fn=_check_stop,
                     existing_audit_bytes=existing_audit_bytes,
                     completed_categories=completed_categories,
+                    model_tree_name=model_tree.name if model_tree else None,
+                    include_summary=generate_summary,
+                    summary_prompt=st.session_state.get("summary_prompt", summary_prompt_default),
+                    accuracy_threshold=st.session_state.get("accuracy_threshold", 0.80),
+                    run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    audit_warnings=audit_warnings,
                 )
                 progress_bar.progress(1.0)
                 progress_text.empty()

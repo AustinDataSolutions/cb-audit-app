@@ -152,6 +152,13 @@ def _ensure_sentences_sheet(wb):
     return ws
 
 
+def _format_categories_selected(topics_to_audit, categories_to_audit):
+    """Format the categories selected for display in the settings sheet."""
+    if not topics_to_audit:
+        return f"All ({len(categories_to_audit)})"
+    return f"{len(categories_to_audit)} of model selected:\n" + "\n".join(categories_to_audit)
+
+
 def _ensure_settings_sheet(wb):
     if "Audit Settings" in wb.sheetnames:
         ws = wb["Audit Settings"]
@@ -174,6 +181,14 @@ def _write_settings_sheet(ws, settings):
     for key, value in settings.items():
         ws.append([key, value])
         _apply_alignment_to_row(ws, ws.max_row, SETTINGS_WRAP_COLUMNS)
+
+
+def _update_setting(ws, key, value):
+    """Update a single setting value by key in the Audit Settings sheet."""
+    for row_idx in range(2, ws.max_row + 1):
+        if ws.cell(row=row_idx, column=1).value == key:
+            ws.cell(row=row_idx, column=2, value=value)
+            return
 
 
 def _load_yaml(path):
@@ -551,6 +566,12 @@ def run_audit(
     check_stop_fn=None,
     existing_audit_bytes=None,
     completed_categories=None,
+    model_tree_name=None,
+    include_summary=False,
+    summary_prompt="",
+    accuracy_threshold=0.80,
+    run_datetime=None,
+    audit_warnings=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -632,15 +653,26 @@ def run_audit(
     ws_sentences = _ensure_sentences_sheet(wb)
     ws_settings = _ensure_settings_sheet(wb)
 
-    _write_settings_sheet(ws_settings, {
+    settings = {
         "LLM Provider": llm_provider,
         "Model": model_name,
+        "Organization": organization,
+        "Audience": audience,
+        "Context": model_info or "",
+        "Model Tree File": model_tree_name or "(none)",
+        "Categories Selected": _format_categories_selected(topics_to_audit, categories_to_audit),
+        "Audit Prompt": prompt_template,
+        "Include Summary of Issues": "Yes" if include_summary else "No",
+        "Summary Prompt": summary_prompt if include_summary else "(n/a)",
+        "Accuracy Threshold": accuracy_threshold if include_summary else "(n/a)",
         "Max Categories": max_categories,
         "Max Sentences per Category": max_sentences_per_category,
         "Max Tokens per Request": max_tokens,
-        "Organization": organization,
-        "Audience": audience,
-    })
+        "Run Started": run_datetime or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Run Finished": "",
+        "Warnings": "\n".join(audit_warnings) if audit_warnings else "(none)",
+    }
+    _write_settings_sheet(ws_settings, settings)
 
     # Track which categories need LLM auditing vs already completed
     categories_needing_audit = []
@@ -815,6 +847,9 @@ def run_audit(
         # Save progress after each category completes
         if save_progress_fn:
             save_progress_fn(_save_current_workbook())
+
+    # Record finish time
+    _update_setting(ws_settings, "Run Finished", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     if ws_findings.max_row > 1:
         _add_model_average_row(ws_findings)
