@@ -763,6 +763,8 @@ def run_audit(
             _add_model_average_row(ws_findings)
             _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
             added_model_avg = True
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _update_setting(ws_settings, "Run Finished", f"In progress (last saved: {now})")
         _write_errors_sheet(wb, collected_warnings)
         _refresh_auto_filter(ws_findings)
         _refresh_auto_filter(ws_sentences)
