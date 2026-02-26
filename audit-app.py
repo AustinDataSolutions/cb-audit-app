@@ -740,9 +740,9 @@ def main():
                 )
                 if int(max_sentences) < max_sentences_in_category:
                     audit_warnings.append(
-                        "Max sentences per category is "
+                        "Max sentences per category is set to "
                         f"{int(max_sentences)}, but the input has up to "
-                        f"{max_sentences_in_category} sentences in a category."
+                        f"{max_sentences_in_category} sentences in a category. Adjust limit in sidebar to override."
                     )
 
                 estimated_tokens_per_sentence = 30
