@@ -57,13 +57,18 @@ def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
     cell.number_format = numbers.FORMAT_PERCENTAGE
 
 
-def _add_model_average_row(ws_categories):
-    ws_categories.insert_rows(2)
-    ws_categories.cell(row=2, column=1, value="AVERAGE")
-    last_row = ws_categories.max_row
-    average_cell = ws_categories.cell(row=2, column=3)
-    average_cell.value = f"=AVERAGE(C3:C{last_row})"
-    average_cell.number_format = numbers.FORMAT_PERCENTAGE
+def _write_model_average(ws_settings, ws_findings):
+    """Write the model average accuracy formula to the Audit Settings sheet."""
+    last_row = ws_findings.max_row
+    if last_row < 2:
+        return
+    formula = f"=AVERAGE(Findings!C2:C{last_row})"
+    _update_setting(ws_settings, "Model Average Accuracy", formula)
+    # Apply percentage format to the value cell
+    for row_idx in range(2, ws_settings.max_row + 1):
+        if ws_settings.cell(row=row_idx, column=1).value == "Model Average Accuracy":
+            ws_settings.cell(row=row_idx, column=2).number_format = numbers.FORMAT_PERCENTAGE
+            break
 
 
 def _ensure_headers(ws, headers):
@@ -698,6 +703,7 @@ def run_audit(
         "Max Tokens per Request": max_tokens,
         "Run Started": run_datetime or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Run Finished": "",
+        "Model Average Accuracy": "",
     }
     _write_settings_sheet(ws_settings, settings)
 
@@ -757,25 +763,16 @@ def run_audit(
 
     def _save_current_workbook():
         """Save current workbook state and return bytes."""
-        added_model_avg = False
-        if ws_findings.max_row > 1:
-            # Temporarily add average row for the partial output
-            _add_model_average_row(ws_findings)
-            _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
-            added_model_avg = True
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _update_setting(ws_settings, "Run Finished", f"In progress (last saved: {now})")
+        _write_model_average(ws_settings, ws_findings)
         _write_errors_sheet(wb, collected_warnings)
         _refresh_auto_filter(ws_findings)
         _refresh_auto_filter(ws_sentences)
         temp_output = BytesIO()
         wb.save(temp_output)
         temp_output.seek(0)
-        result = temp_output.getvalue()
-        # Remove the temporarily added average row
-        if added_model_avg:
-            ws_findings.delete_rows(2)
-        return result
+        return temp_output.getvalue()
 
     # Now only connect to LLM if there are categories to audit
     client = None
@@ -903,11 +900,8 @@ def run_audit(
     # Record finish time
     _update_setting(ws_settings, "Run Finished", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
+    _write_model_average(ws_settings, ws_findings)
     _write_errors_sheet(wb, collected_warnings)
-
-    if ws_findings.max_row > 1:
-        _add_model_average_row(ws_findings)
-        _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
 
     _refresh_auto_filter(ws_findings)
     _refresh_auto_filter(ws_sentences)
@@ -1007,6 +1001,8 @@ def run_audit_from_config():
 
     ws_findings = _ensure_findings_sheet(wb)
     ws_sentences = _ensure_sentences_sheet(wb)
+    ws_settings = _ensure_settings_sheet(wb)
+    _write_settings_sheet(ws_settings, {"Model Average Accuracy": ""})
 
     if resume_mode:
         existing_categories = [
@@ -1102,9 +1098,7 @@ def run_audit_from_config():
         _refresh_auto_filter(ws_sentences)
         wb.save(output_path)
 
-    if ws_findings.max_row > 1:
-        _add_model_average_row(ws_findings)
-        _apply_alignment_to_row(ws_findings, 2, FINDINGS_WRAP_COLUMNS)
+    _write_model_average(ws_settings, ws_findings)
 
     _refresh_auto_filter(ws_findings)
     _refresh_auto_filter(ws_sentences)
