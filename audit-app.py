@@ -157,7 +157,7 @@ def _load_app_defaults(config_path):
         "model_name_anthropic": "claude-opus-4-5",
         "model_name_openai": "gpt-5-nano",
         "max_categories": 1000,
-        "max_sentences_per_category": 51,
+        "max_sentences_per_category": 1001,
         "max_tokens": 10000,
     }
     try:
