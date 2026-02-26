@@ -935,6 +935,7 @@ def main():
                     check_stop_fn=_check_stop,
                     existing_audit_bytes=existing_audit_bytes,
                     completed_categories=completed_categories,
+                    audit_file_name=uploaded_audit.name,
                     model_tree_name=model_tree.name if model_tree else None,
                     include_summary=generate_summary,
                     summary_prompt=st.session_state.get("summary_prompt", summary_prompt_default),

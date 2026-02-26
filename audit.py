@@ -152,11 +152,11 @@ def _ensure_sentences_sheet(wb):
     return ws
 
 
-def _format_categories_selected(topics_to_audit, categories_to_audit):
+def _format_categories_selected(topics_to_audit, selected_count, total_count):
     """Format the categories selected for display in the settings sheet."""
     if not topics_to_audit:
-        return f"All ({len(categories_to_audit)})"
-    return f"{len(categories_to_audit)} of model selected:\n" + "\n".join(categories_to_audit)
+        return f"All ({total_count})"
+    return f"{selected_count} of {total_count}"
 
 
 def _ensure_settings_sheet(wb):
@@ -566,6 +566,7 @@ def run_audit(
     check_stop_fn=None,
     existing_audit_bytes=None,
     completed_categories=None,
+    audit_file_name=None,
     model_tree_name=None,
     include_summary=False,
     summary_prompt="",
@@ -590,7 +591,9 @@ def run_audit(
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
 
-    categories_to_audit = list(category_sentences.keys())
+    all_categories = list(category_sentences.keys())
+    total_category_count = len(all_categories)
+    categories_to_audit = all_categories
     if topics_to_audit:
         def _normalize_topic(value):
             text = str(value).strip()
@@ -654,13 +657,14 @@ def run_audit(
     ws_settings = _ensure_settings_sheet(wb)
 
     settings = {
+        "Input File": audit_file_name or "",
         "LLM Provider": llm_provider,
         "Model": model_name,
         "Organization": organization,
         "Audience": audience,
         "Context": model_info or "",
         "Model Tree File": model_tree_name or "(none)",
-        "Categories Selected": _format_categories_selected(topics_to_audit, categories_to_audit),
+        "Categories Selected": _format_categories_selected(topics_to_audit, len(categories_to_audit), total_category_count),
         "Audit Prompt": prompt_template,
         "Include Summary of Issues": "Yes" if include_summary else "No",
         "Summary Prompt": summary_prompt if include_summary else "(n/a)",
