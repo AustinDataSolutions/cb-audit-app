@@ -866,6 +866,19 @@ def run_audit(
 
         nlp_results = _parse_llm_response(response_text)
 
+        # Validate LLM response
+        sent_ids = {str(sid) for sid, _ in sent_tuples[:max_sentences_per_category]}
+        returned_ids = set(nlp_results.keys())
+        if not returned_ids:
+            warn_fn(f"Category \"{category}\": LLM response could not be parsed. All sentences will have blank audit results.")
+        else:
+            missing = sent_ids - returned_ids
+            extra = returned_ids - sent_ids
+            if missing:
+                warn_fn(f"Category \"{category}\": {len(missing)} of {len(sent_ids)} sentences missing from LLM response.")
+            if extra:
+                warn_fn(f"Category \"{category}\": LLM returned {len(extra)} unrecognized sentence IDs.")
+
         # Update the existing sentences rows with judgment results
         # Columns: ID(1), Sentence(2), Topic(3), Audit(4), Explanation(5)
         start_row, end_row = sentences_row_ranges[category]
