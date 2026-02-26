@@ -754,13 +754,14 @@ def main():
                     )
 
                 estimated_tokens_per_sentence = 30
-                estimated_output_tokens = max_sentences_in_category * estimated_tokens_per_sentence
+                effective_max_sentences = min(max_sentences_in_category, int(max_sentences))
+                estimated_output_tokens = effective_max_sentences * estimated_tokens_per_sentence
                 if estimated_output_tokens >= int(max_tokens):
                     audit_warnings.append(
-                        "LLM response likely to be truncated for some categories based on "
-                        f"max tokens per request limit of {int(max_tokens)} "
-                        f"(response estimated at {estimated_tokens_per_sentence} tokens per sentence; "
-                        f"input file contains up to {max_sentences_in_category} sentences)."
+                        f"Categories with many sentences may produce LLM responses that exceed the "
+                        f"max tokens per request limit ({int(max_tokens)}). Some sentences in those "
+                        f"categories may be returned without audit results. Adjust \"Max tokens per "
+                        f"request\" or \"Max sentences per category\" in the sidebar to change this."
                     )
 
         except Exception as exc:
