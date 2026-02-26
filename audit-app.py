@@ -739,10 +739,15 @@ def main():
                     category_counts[cat] for cat in categories_to_audit
                 )
                 if int(max_sentences) < max_sentences_in_category:
+                    affected = sum(
+                        1 for cat in categories_to_audit
+                        if category_counts[cat] > int(max_sentences)
+                    )
                     audit_warnings.append(
-                        "Max sentences per category is set to "
-                        f"{int(max_sentences)}, but the input has up to "
-                        f"{max_sentences_in_category} sentences in a category. Adjust limit in sidebar to override."
+                        f"{affected} of {len(categories_to_audit)} categories have more sentences than the "
+                        f"max setting of {int(max_sentences)}. Only the first {int(max_sentences)} sentences per "
+                        f"category will be audited; the rest will be excluded from results. "
+                        f"Adjust \"Max sentences per category\" in the sidebar to change this."
                     )
 
                 estimated_tokens_per_sentence = 30
