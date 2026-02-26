@@ -45,7 +45,8 @@ def _apply_precision_formula(ws_categories, row_idx, sentences_sheet_title):
     judgment_col = f"{sheet_ref}!D:D"
     category_cell = "INDEX(A:A, ROW())"
     formula = (
-        f"=COUNTIFS({category_col}, {category_cell}, {judgment_col}, \"YES\")/COUNTIF({category_col}, {category_cell}))"
+        f"=COUNTIFS({category_col}, {category_cell}, {judgment_col}, \"YES\")"
+        f"/COUNTIFS({category_col}, {category_cell}, {judgment_col}, \"<>\")"
     )
     cell = ws_categories.cell(row=row_idx, column=3)
     cell.value = formula
