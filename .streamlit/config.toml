@@ -1,0 +1,4 @@
+[server]
+# Disable file watching to prevent automatic reruns during long-running audits.
+# A git commit or file save would otherwise interrupt an in-progress audit.
+fileWatcherType = "none"

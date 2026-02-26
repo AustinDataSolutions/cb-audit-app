@@ -1021,6 +1021,24 @@ def main():
                 )
         finally:
             st.session_state["audit_in_progress"] = False
+            st.session_state["audit_stop_requested"] = False
+            # If the audit was interrupted (e.g. by Streamlit rerun from file
+            # watcher) without the except blocks setting audit_output_bytes,
+            # promote whatever partial results we have so the download button
+            # still appears after the rerun.
+            if (
+                not st.session_state.get("audit_output_bytes")
+                and st.session_state.get("partial_audit_bytes")
+            ):
+                st.session_state["audit_output_bytes"] = st.session_state["partial_audit_bytes"]
+                st.session_state["audit_is_partial"] = True
+                partial_fname = _build_completed_filename(uploaded_audit)
+                if "_completed" in partial_fname:
+                    partial_fname = partial_fname.replace("_completed", "_partial")
+                elif "_partial" not in partial_fname:
+                    base, ext = os.path.splitext(partial_fname)
+                    partial_fname = f"{base}_partial{ext}"
+                st.session_state["audit_output_filename"] = partial_fname
 
     audit_output_bytes = st.session_state.get("audit_output_bytes")
     summary_prompt = st.session_state.get("summary_prompt", summary_prompt_default)
@@ -1137,6 +1155,12 @@ def main():
     summary_pending = st.session_state.get("summary_generation_pending")
     if audit_output_bytes and not summary_pending:
         is_partial = st.session_state.get("audit_is_partial", False)
+        if is_partial and not st.session_state.get("audit_in_progress", False):
+            st.warning(
+                "The audit was interrupted before it finished. "
+                "Partial results are available for download below. "
+                "You can re-upload the partial file to resume the audit where it left off."
+            )
         download_label = "Download in-progress audit (.xlsx)" if is_partial else "Download completed audit (.xlsx)"
         completed_filename = st.session_state.get("audit_output_filename") or _build_completed_filename(uploaded_audit)
         st.download_button(
