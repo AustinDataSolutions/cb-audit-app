@@ -4,8 +4,10 @@ import argparse
 from io import BytesIO
 import os
 import re
+import threading
 
 import anthropic
+import httpx
 from dotenv import load_dotenv
 from openpyxl import load_workbook
 import pandas as pd
@@ -21,6 +23,46 @@ DEFAULT_MODEL = "claude-sonnet-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
+DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
+_LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
+
+
+def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
+    """Run *call_fn* in a background thread, posting status updates while waiting."""
+    result = [None]
+    error = [None]
+
+    def _worker():
+        try:
+            result[0] = call_fn()
+        except Exception as e:
+            error[0] = e
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
+    elapsed = 0
+    poll_interval = 1
+    while thread.is_alive():
+        thread.join(timeout=poll_interval)
+        elapsed += poll_interval
+        if (
+            status_fn
+            and elapsed >= _LLM_STATUS_DELAY
+            and elapsed % _LLM_STATUS_DELAY < poll_interval
+        ):
+            remaining = max(timeout_seconds - elapsed, 0)
+            status_fn(
+                f"Waiting for LLM response\u2026 "
+                f"({remaining}s remaining before timeout)"
+            )
+
+    if status_fn:
+        status_fn("")
+
+    if error[0] is not None:
+        raise error[0]
+    return result[0]
 
 
 class SummaryStopRequested(Exception):
@@ -165,6 +207,7 @@ def _collect_summary_records(
     progress_fn,
     warn_fn,
     check_stop_fn=None,
+    status_fn=None,
 ):
     summary_records = []
     issues_by_key = {}
@@ -199,26 +242,33 @@ def _collect_summary_records(
                 inaccurate_sent_explanations=inaccurate_sent_explanations,
                 model_info=model_info or "",
             )
-            if llm_provider == "anthropic":
-                message = client.messages.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = message.content[0].text
-            elif llm_provider == "openai":
-                response = client.chat.completions.create(
-                    model=model_name,
-                    max_completion_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": message_content}
-                    ]
-                )
-                response_text = response.choices[0].message.content
-            else:
-                raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+            def _make_llm_call():
+                if llm_provider == "anthropic":
+                    message = client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        messages=[
+                            {"role": "user", "content": message_content}
+                        ],
+                        timeout=httpx.Timeout(DEFAULT_LLM_TIMEOUT, connect=30.0),
+                    )
+                    return message.content[0].text
+                elif llm_provider == "openai":
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        max_completion_tokens=max_tokens,
+                        messages=[
+                            {"role": "user", "content": message_content}
+                        ],
+                        timeout=DEFAULT_LLM_TIMEOUT,
+                    )
+                    return response.choices[0].message.content
+                else:
+                    raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+
+            response_text = _call_llm_with_status(
+                _make_llm_call, DEFAULT_LLM_TIMEOUT, status_fn
+            )
             summary_text = _parse_llm_summary(response_text, warn_fn)
 
         category_key = _topic_key(category)
@@ -268,6 +318,7 @@ def summarize_audit_report(
     warn_fn=None,
     progress_fn=None,
     check_stop_fn=None,
+    status_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -302,6 +353,7 @@ def summarize_audit_report(
         progress_fn=progress_fn,
         warn_fn=warn_fn,
         check_stop_fn=check_stop_fn,
+        status_fn=status_fn,
     )
 
     wb = load_workbook(BytesIO(audit_bytes))

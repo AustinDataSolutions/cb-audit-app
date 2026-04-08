@@ -836,12 +836,48 @@ def main():
     elif st.session_state.get("audit_run_requested", False) and not can_run_audit:
         st.session_state["audit_run_requested"] = False
 
+    if st.session_state.get("audit_in_progress", False) and not should_run_audit:
+        # The audit was marked in-progress by a previous Streamlit run that was
+        # interrupted (e.g. user clicked Stop while an LLM call was blocking).
+        # The finally block from that run may never have executed, leaving us in
+        # a stuck state.  Recover by promoting any partial results and resetting.
+        partial_bytes = st.session_state.get("partial_audit_bytes")
+        if partial_bytes:
+            st.session_state["audit_output_bytes"] = partial_bytes
+            st.session_state["audit_is_partial"] = True
+            if uploaded_audit:
+                fname = _build_completed_filename(uploaded_audit)
+                if "_completed" in fname:
+                    fname = fname.replace("_completed", "_partial")
+                elif "_partial" not in fname:
+                    base, ext = os.path.splitext(fname)
+                    fname = f"{base}_partial{ext}"
+                st.session_state["audit_output_filename"] = fname
+            else:
+                st.session_state["audit_output_filename"] = "audit_partial.xlsx"
+        st.session_state["audit_in_progress"] = False
+        st.session_state["audit_stop_requested"] = False
+        st.rerun()
+
     if st.session_state.get("audit_in_progress", False):
         st.button(
             "Stop audit",
             type="secondary",
             on_click=_request_audit_stop,
         )
+        # Always surface partial results for download while audit is running
+        partial_bytes = st.session_state.get("partial_audit_bytes")
+        if partial_bytes and uploaded_audit:
+            partial_filename = _build_completed_filename(uploaded_audit).replace(
+                "_completed", "_in_progress"
+            )
+            st.download_button(
+                label="Download in-progress audit (.xlsx)",
+                data=partial_bytes,
+                file_name=partial_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="stop_area_partial_download",
+            )
     elif st.session_state.get("warnings_confirmation_needed", False):
         st.warning("Please review the warnings above before proceeding.")
         col1, col2 = st.columns([1, 1])
@@ -899,6 +935,7 @@ def main():
                 progress_container = st.container()
                 progress_text = progress_container.empty()
                 progress_bar = progress_container.progress(0)
+                status_text = progress_container.empty()
                 download_container = progress_container.empty()
 
                 def _update_progress(current, total, category_name):
@@ -906,6 +943,12 @@ def main():
                         f"Auditing category {current} of {total}: {category_name}"
                     )
                     progress_bar.progress(current / total if total else 0)
+
+                def _update_status(message):
+                    if message:
+                        status_text.info(message)
+                    else:
+                        status_text.empty()
 
                 @st.fragment
                 def _render_download_button(partial_bytes, partial_filename, button_key):
@@ -978,10 +1021,12 @@ def main():
                     accuracy_threshold=st.session_state.get("accuracy_threshold", 0.80),
                     run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     audit_warnings=audit_warnings,
+                    status_fn=_update_status,
                 )
                 progress_bar.progress(1.0)
                 progress_text.empty()
                 progress_bar.empty()
+                status_text.empty()
                 download_container.empty()
             st.session_state["audit_output_bytes"] = output_bytes
             st.session_state["partial_audit_bytes"] = None
@@ -1092,6 +1137,7 @@ def main():
                 progress_container = st.container()
                 progress_text = progress_container.empty()
                 progress_bar = progress_container.progress(0)
+                summary_status_text = progress_container.empty()
                 stop_button_container = progress_container.empty()
                 stop_button_container.button(
                     "Stop summary and download audit",
@@ -1104,6 +1150,12 @@ def main():
                         f"Summarizing category {current} of {total}: {category_name}"
                     )
                     progress_bar.progress(current / total if total else 0)
+
+                def _update_summary_status(message):
+                    if message:
+                        summary_status_text.info(message)
+                    else:
+                        summary_status_text.empty()
 
                 def _check_summary_stop():
                     return st.session_state.get("summary_stop_requested", False)
@@ -1123,6 +1175,7 @@ def main():
                     warn_fn=st.warning,
                     progress_fn=_update_summary_progress,
                     check_stop_fn=_check_summary_stop,
+                    status_fn=_update_summary_status,
                 )
                 progress_bar.progress(1.0)
             st.session_state["audit_output_bytes"] = summary_bytes
@@ -1146,6 +1199,8 @@ def main():
                 progress_text.empty()
             if progress_bar is not None:
                 progress_bar.empty()
+            if summary_status_text is not None:
+                summary_status_text.empty()
             if stop_button_container is not None:
                 stop_button_container.empty()
     elif st.session_state.get("summary_generation_pending") and summary_help:

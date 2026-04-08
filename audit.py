@@ -4,10 +4,12 @@ from io import BytesIO
 from datetime import datetime
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 
 import anthropic
+import httpx
 from dotenv import load_dotenv
 import pandas as pd
 import yaml
@@ -27,6 +29,7 @@ DEFAULT_MAX_SENTENCES_PER_CATEGORY = 51
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
+DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
 COLUMN_WIDTH_PX = 300
 COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
 FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
@@ -562,13 +565,60 @@ def _load_existing_audit_data(audit_bytes):
     return result
 
 
+_LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
+
+
+def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
+    """Run *call_fn* in a background thread, posting status updates while waiting.
+
+    Shows a "still waiting" message after ``_LLM_STATUS_DELAY`` seconds, then
+    every 20 s after that until the call completes or times out.
+    """
+    result = [None]
+    error = [None]
+
+    def _worker():
+        try:
+            result[0] = call_fn()
+        except Exception as e:
+            error[0] = e
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
+    elapsed = 0
+    poll_interval = 1  # second
+    while thread.is_alive():
+        thread.join(timeout=poll_interval)
+        elapsed += poll_interval
+        if (
+            status_fn
+            and elapsed >= _LLM_STATUS_DELAY
+            and elapsed % _LLM_STATUS_DELAY < poll_interval
+        ):
+            remaining = max(timeout_seconds - elapsed, 0)
+            status_fn(
+                f"Waiting for LLM response\u2026 "
+                f"({remaining}s remaining before timeout)"
+            )
+
+    if status_fn:
+        status_fn("")  # clear status
+
+    if error[0] is not None:
+        raise error[0]
+    return result[0]
+
+
 def _is_retryable_llm_error(exc):
     """Return True if the exception is a transient LLM API error worth retrying."""
+    if isinstance(exc, httpx.TimeoutException):
+        return True
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if status in (429, 529, 503):
         return True
     msg = str(exc).lower()
-    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable")):
+    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable", "timed out", "timeout")):
         return True
     return False
 
@@ -602,6 +652,8 @@ def run_audit(
     accuracy_threshold=0.80,
     run_datetime=None,
     audit_warnings=None,
+    llm_timeout=DEFAULT_LLM_TIMEOUT,
+    status_fn=None,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -825,39 +877,55 @@ def run_audit(
         response_text = None
         for attempt in range(len(retry_delays) + 1):
             try:
-                if llm_provider == 'anthropic':
-                    message = client.messages.create(
-                        model=model_name,
-                        max_tokens=max_tokens,
-                        messages=[
-                            {"role": "user", "content": message_content}
-                        ]
-                    )
-                    response_text = message.content[0].text
-                elif llm_provider == 'openai':
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        max_completion_tokens=max_tokens,
-                        messages=[
-                            {"role": "user", "content": message_content}
-                        ]
-                    )
-                    response_text = response.choices[0].message.content
-                else:
-                    raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+                def _make_llm_call():
+                    if llm_provider == 'anthropic':
+                        message = client.messages.create(
+                            model=model_name,
+                            max_tokens=max_tokens,
+                            messages=[
+                                {"role": "user", "content": message_content}
+                            ],
+                            timeout=httpx.Timeout(llm_timeout, connect=30.0),
+                        )
+                        return message.content[0].text
+                    elif llm_provider == 'openai':
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            max_completion_tokens=max_tokens,
+                            messages=[
+                                {"role": "user", "content": message_content}
+                            ],
+                            timeout=llm_timeout,
+                        )
+                        return response.choices[0].message.content
+                    else:
+                        raise ValueError("llm_provider must be 'anthropic' or 'openai'")
+
+                response_text = _call_llm_with_status(
+                    _make_llm_call, llm_timeout, status_fn
+                )
                 break  # Success, exit retry loop
             except Exception as e:
                 is_retryable = _is_retryable_llm_error(e)
                 if is_retryable and attempt < len(retry_delays):
                     delay = retry_delays[attempt]
-                    if log_fn:
-                        log_fn(
-                            f"LLM API returned a retryable error (attempt {attempt + 1}/{len(retry_delays) + 1}). "
-                            f"Retrying in {delay} seconds..."
-                        )
                     if save_progress_fn:
                         save_progress_fn(_save_current_workbook())
-                    time.sleep(delay)
+                    if status_fn:
+                        for remaining in range(delay, 0, -1):
+                            status_fn(
+                                f"LLM request failed (attempt {attempt + 1}/{len(retry_delays) + 1}). "
+                                f"Retrying in {remaining}s\u2026"
+                            )
+                            time.sleep(1)
+                        status_fn("")
+                    else:
+                        if log_fn:
+                            log_fn(
+                                f"LLM API returned a retryable error (attempt {attempt + 1}/{len(retry_delays) + 1}). "
+                                f"Retrying in {delay} seconds..."
+                            )
+                        time.sleep(delay)
                     continue
                 # Non-retryable error or exhausted retries — save progress and re-raise
                 if save_progress_fn:
@@ -1071,7 +1139,8 @@ def run_audit_from_config():
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
-                ]
+                ],
+                timeout=httpx.Timeout(DEFAULT_LLM_TIMEOUT, connect=30.0),
             )
             response_text = message.content[0].text
         else:
@@ -1080,7 +1149,8 @@ def run_audit_from_config():
                 max_completion_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": message_content}
-                ]
+                ],
+                timeout=DEFAULT_LLM_TIMEOUT,
             )
             response_text = response.choices[0].message.content
 
