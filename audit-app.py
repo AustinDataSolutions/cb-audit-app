@@ -868,13 +868,13 @@ def main():
             if uploaded_audit:
                 fname = _build_completed_filename(uploaded_audit)
                 if "_completed" in fname:
-                    fname = fname.replace("_completed", "_partial")
-                elif "_partial" not in fname:
+                    fname = fname.replace("_completed", "_checkpoint")
+                elif "_checkpoint" not in fname:
                     base, ext = os.path.splitext(fname)
-                    fname = f"{base}_partial{ext}"
+                    fname = f"{base}_checkpoint{ext}"
                 st.session_state["audit_output_filename"] = fname
             else:
-                st.session_state["audit_output_filename"] = "audit_partial.xlsx"
+                st.session_state["audit_output_filename"] = "audit_checkpoint.xlsx"
         st.session_state["audit_in_progress"] = False
         st.session_state["audit_stop_requested"] = False
         st.rerun()
@@ -889,10 +889,10 @@ def main():
         partial_bytes = st.session_state.get("partial_audit_bytes")
         if partial_bytes and uploaded_audit:
             partial_filename = _build_completed_filename(uploaded_audit).replace(
-                "_completed", "_in_progress"
+                "_completed", "_checkpoint"
             )
             st.download_button(
-                label="Download in-progress audit (.xlsx)",
+                label="Download audit checkpoint (.xlsx)",
                 data=partial_bytes,
                 file_name=partial_filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -973,7 +973,7 @@ def main():
                 @st.fragment
                 def _render_download_button(partial_bytes, partial_filename, button_key):
                     st.download_button(
-                        label="Download in-progress audit (.xlsx)",
+                        label="Download audit checkpoint (.xlsx)",
                         data=partial_bytes,
                         file_name=partial_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -983,14 +983,14 @@ def main():
                 def _save_progress(partial_bytes):
                     st.session_state["partial_audit_bytes"] = partial_bytes
                     # Update the download button with the latest partial results
-                    partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_in_progress")
+                    partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_checkpoint")
                     with download_container:
                         partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
                         st.session_state["partial_download_counter"] = partial_download_counter
                         _render_download_button(
                             partial_bytes,
                             partial_filename,
-                            f"download_in_progress_{partial_download_counter}",
+                            f"download_checkpoint_{partial_download_counter}",
                         )
 
                 def _check_stop():
@@ -1070,15 +1070,15 @@ def main():
                 st.session_state["audit_output_bytes"] = partial_bytes
                 failed_filename = _build_completed_filename(uploaded_audit)
                 if "_completed" in failed_filename:
-                    failed_filename = failed_filename.replace("_completed", "_partial")
-                elif "_partial" not in failed_filename:
+                    failed_filename = failed_filename.replace("_completed", "_checkpoint")
+                elif "_checkpoint" not in failed_filename:
                     base, ext = os.path.splitext(failed_filename)
-                    failed_filename = f"{base}_partial{ext}"
+                    failed_filename = f"{base}_checkpoint{ext}"
                 st.session_state["audit_output_filename"] = failed_filename
                 st.session_state["audit_is_partial"] = True
                 st.info(
                     "Partial audit results are available for download. "
-                    "You can re-upload the in-progress file to continue the audit where it left off."
+                    "You can re-upload the checkpoint file to continue the audit where it left off."
                 )
             if _is_retryable_llm_error(exc):
                 st.warning(
@@ -1100,10 +1100,10 @@ def main():
                 st.session_state["audit_is_partial"] = True
                 partial_fname = _build_completed_filename(uploaded_audit)
                 if "_completed" in partial_fname:
-                    partial_fname = partial_fname.replace("_completed", "_partial")
-                elif "_partial" not in partial_fname:
+                    partial_fname = partial_fname.replace("_completed", "_checkpoint")
+                elif "_checkpoint" not in partial_fname:
                     base, ext = os.path.splitext(partial_fname)
-                    partial_fname = f"{base}_partial{ext}"
+                    partial_fname = f"{base}_checkpoint{ext}"
                 st.session_state["audit_output_filename"] = partial_fname
 
     audit_output_bytes = st.session_state.get("audit_output_bytes")
@@ -1235,9 +1235,9 @@ def main():
             st.warning(
                 "The audit was interrupted before it finished. "
                 "Partial results are available for download below. "
-                "You can re-upload the partial file to resume the audit where it left off."
+                "You can re-upload the checkpoint file to resume the audit where it left off."
             )
-        download_label = "Download in-progress audit (.xlsx)" if is_partial else "Download completed audit (.xlsx)"
+        download_label = "Download audit checkpoint (.xlsx)" if is_partial else "Download completed audit (.xlsx)"
         completed_filename = st.session_state.get("audit_output_filename") or _build_completed_filename(uploaded_audit)
         st.download_button(
             label=download_label,
