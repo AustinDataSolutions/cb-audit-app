@@ -631,13 +631,13 @@ def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
 
 def _is_retryable_llm_error(exc):
     """Return True if the exception is a transient LLM API error worth retrying."""
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, ConnectionError)):
         return True
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if status in (429, 529, 503):
         return True
     msg = str(exc).lower()
-    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable", "timed out", "timeout")):
+    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable", "timed out", "timeout", "connection error")):
         return True
     return False
 
