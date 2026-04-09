@@ -334,8 +334,8 @@ def _extract_model_root_info(model_tree_bytes):
     if root_node is None:
         return ("Unknown", "None")
     title = root_node.get('name') or "Unknown"
-    description = root_node.get('description') or "None"
-    return (title, description)
+    description = model_root.get('desc') or model_root.get('description') if model_root is not None else None
+    return (title, description or "None")
 
 
 def _extract_category_descriptions(model_tree_bytes):
@@ -673,6 +673,7 @@ def run_audit(
     audit_warnings=None,
     llm_timeout=DEFAULT_LLM_TIMEOUT,
     status_fn=None,
+    include_model_description=True,
 ):
     if log_fn is None:
         log_fn = lambda *_args, **_kwargs: None
@@ -691,6 +692,8 @@ def run_audit(
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
     model_title, model_description = _extract_model_root_info(model_tree_bytes)
+    if not include_model_description:
+        model_description = "None"
 
     all_categories = list(category_sentences.keys())
     total_category_count = len(all_categories)

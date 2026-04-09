@@ -342,10 +342,15 @@ def _parse_model_xml(xml_bytes):
                 _, tree_node = build_node(node, [])
                 tree_nodes.append(tree_node)
 
+    root_title = _get_node_field(root_node, "name") if root_node is not None else None
+    root_description = model_element.get("desc") or model_element.get("description") if model_element is not None else None
+
     model_data = {
         "model_name": model_name,
         "nodes": nodes_by_id,
         "tree_nodes": tree_nodes,
+        "root_title": root_title,
+        "root_description": root_description,
     }
 
     return model_data
@@ -557,6 +562,21 @@ def main():
         st.write("Note: Topics with no rules will not appear in audit output, even if selected in model tree.")
 
     st.subheader("Add context")
+
+    model_data = st.session_state.get("model_data")
+    include_model_description = False
+    if model_tree and model_data:
+        root_desc = model_data.get("root_description")
+        if root_desc:
+            st.markdown(f"**Model description:** {root_desc}")
+            include_model_description = st.checkbox(
+                "Include model description in prompts",
+                value=True,
+                help="Send the model description alongside the model's title to the LLM with each prompt to aid its understanding of the model's purpose.",
+            )
+        else:
+            st.info("No description was found for this model.")
+
     st.write("Write a short description of the model you're auditing to aid the LLM's understanding.")
     model_info = st.text_area(
         "About this model: (optional)", 
@@ -1022,6 +1042,7 @@ def main():
                     run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     audit_warnings=audit_warnings,
                     status_fn=_update_status,
+                    include_model_description=include_model_description,
                 )
                 progress_bar.progress(1.0)
                 progress_text.empty()
