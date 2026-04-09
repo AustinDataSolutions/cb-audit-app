@@ -319,6 +319,25 @@ def _build_category_sentences(df, is_output_format=False):
     return category_sentences
 
 
+def _extract_model_root_info(model_tree_bytes):
+    """Return (title, description) for the root node of the model tree XML."""
+    if not model_tree_bytes:
+        return ("Unknown", "None")
+    root = ET.fromstring(model_tree_bytes)
+    model_root = root if root.tag == "model" else root.find("model")
+    tree_elem = None
+    if model_root is not None:
+        tree_elem = model_root.find('tree')
+    if tree_elem is None:
+        tree_elem = root.find('tree')
+    root_node = tree_elem[0] if tree_elem is not None and len(tree_elem) > 0 else None
+    if root_node is None:
+        return ("Unknown", "None")
+    title = root_node.get('name') or "Unknown"
+    description = root_node.get('description') or "None"
+    return (title, description)
+
+
 def _extract_category_descriptions(model_tree_bytes):
     if not model_tree_bytes:
         return {}
@@ -671,6 +690,7 @@ def run_audit(
     category_sentences = _build_category_sentences(df, is_output_format)
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
+    model_title, model_description = _extract_model_root_info(model_tree_bytes)
 
     all_categories = list(category_sentences.keys())
     total_category_count = len(all_categories)
@@ -867,6 +887,8 @@ def run_audit(
             description=description,
             sentences_text=sentences_text,
             model_info=model_info or "",
+            model_title=model_title,
+            model_description=model_description,
             organization=organization,
             audience=audience,
         )
@@ -1042,6 +1064,7 @@ def run_audit_from_config():
                 model_tree_bytes = f.read()
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)
+    model_title, model_description = _extract_model_root_info(model_tree_bytes)
 
     outputs_dir = os.path.join(os.path.dirname(__file__), "outputs")
     if not os.path.exists(outputs_dir):
@@ -1127,6 +1150,9 @@ def run_audit_from_config():
             category=category,
             description=description,
             sentences_text=sentences_text,
+            model_info=model_info,
+            model_title=model_title,
+            model_description=model_description,
             organization=organization,
             audience=audience,
         )

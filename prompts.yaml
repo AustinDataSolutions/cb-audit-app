@@ -1,6 +1,5 @@
 audit_prompt: |
-  You are auditing the accuracy of a topic in a topic model.
-  {model_info}
+  You are auditing the accuracy of a topic in a topic model used by {organization}. The model is titled {model_title} and has the following internal description: {model_description}. Additional information about this model: {model_info}.
   The sentences below come from {organization} {audience}, and were labeled with the topic '{category}'.
   If a description for this topic exists, it follows here: '{description}'.
   For each sentence, return a binary judgment on whether the sentence was accurately labeled with the topic, and also a brief explanation of your reasoning.
