@@ -92,6 +92,30 @@ class TestBuildCompletedFilename:
         today = datetime.now().strftime("%Y-%m-%d")
         assert result == f"completed_audit_completed_{today}.xlsx"
 
+    def test_strips_checkpoint_suffix(self):
+        app = _load_app_module()
+        mock_file = MagicMock()
+        mock_file.name = "audit_3_Fraud_07_04_26_checkpoint_2026-04-09.xlsx"
+        result = app._build_completed_filename(mock_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert result == f"audit_3_Fraud_07_04_26_completed_{today}.xlsx"
+
+    def test_strips_multiple_checkpoint_suffixes(self):
+        app = _load_app_module()
+        mock_file = MagicMock()
+        mock_file.name = "audit_3_Fraud_07_04_26_checkpoint_2026-04-09_checkpoint_2026-04-09_completed_2026-04-09.xlsx"
+        result = app._build_completed_filename(mock_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert result == f"audit_3_Fraud_07_04_26_completed_{today}.xlsx"
+
+    def test_strips_completed_suffix_on_reupload(self):
+        app = _load_app_module()
+        mock_file = MagicMock()
+        mock_file.name = "my_audit_completed_2026-04-01.xlsx"
+        result = app._build_completed_filename(mock_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert result == f"my_audit_completed_{today}.xlsx"
+
 
 # ===========================================================================
 # _topic_key / _normalize_topic (app version)

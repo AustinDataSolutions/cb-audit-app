@@ -262,11 +262,16 @@ def _get_audit_stats(audit_bytes):
         "top_level_categories": top_level_categories,
     }
 
+def _strip_status_suffixes(base):
+    """Remove trailing _checkpoint_YYYY-MM-DD and _completed_YYYY-MM-DD suffixes."""
+    return re.sub(r"(_(?:checkpoint|completed)_\d{4}-\d{2}-\d{2})+$", "", base)
+
 def _build_completed_filename(uploaded_file):
     original_name = getattr(uploaded_file, "name", "") or "completed_audit.xlsx"
     base, ext = os.path.splitext(original_name)
     if base.endswith("_sortable"):
         base = base[: -len("_sortable")]
+    base = _strip_status_suffixes(base)
     if not ext:
         ext = ".xlsx"
     date_suffix = datetime.now().strftime("%Y-%m-%d")
