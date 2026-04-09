@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 from io import BytesIO
+import logging
 import os
 import re
 import threading
+
+logger = logging.getLogger(__name__)
 
 import anthropic
 import httpx
@@ -235,6 +238,7 @@ def _collect_summary_records(
         accuracy = round(((sent_count - wrong_count) / sent_count), 2) if sent_count else 0
         summary_text = ""
         if accuracy < accuracy_threshold:
+            logger.info("Summarizing category %s (accuracy %.0f%%)", category, accuracy * 100)
             if client is None:
                 client = _get_llm_client(llm_provider, anthropic_api_key, openai_api_key)
             message_content = msg_template.format(
@@ -324,6 +328,8 @@ def summarize_audit_report(
         log_fn = lambda *_args, **_kwargs: None
     if warn_fn is None:
         warn_fn = log_fn
+
+    logger.info("summarize_audit_report() starting: provider=%s, model=%s, threshold=%.0f%%", llm_provider, model_name, accuracy_threshold * 100)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_path = prompts_path or os.path.join(script_dir, "prompts.yaml")
@@ -422,6 +428,8 @@ def summarize_audit_report(
     wb.close()
     output.seek(0)
     output_bytes = output.getvalue()
+
+    logger.info("Summary completed: %d categories processed", len(summary_records))
 
     if output_path:
         output_dir = os.path.dirname(output_path)

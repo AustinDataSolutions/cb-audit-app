@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from io import BytesIO
 from datetime import datetime
+import logging
 import os
 import re
 import threading
 import time
 import xml.etree.ElementTree as ET
+
+logger = logging.getLogger(__name__)
 
 import anthropic
 import httpx
@@ -604,6 +607,7 @@ def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
+    logger.debug("LLM call started (timeout: %ds)", timeout_seconds)
 
     elapsed = 0
     poll_interval = 1  # second
@@ -625,21 +629,25 @@ def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
         status_fn("")  # clear status
 
     if error[0] is not None:
+        logger.error("LLM call failed after %ds: %s: %s", elapsed, type(error[0]).__name__, error[0])
         raise error[0]
+    logger.debug("LLM call completed in %ds", elapsed)
     return result[0]
 
 
 def _is_retryable_llm_error(exc):
     """Return True if the exception is a transient LLM API error worth retrying."""
+    retryable = False
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, ConnectionError)):
-        return True
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if status in (429, 529, 503):
-        return True
-    msg = str(exc).lower()
-    if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable", "timed out", "timeout", "connection error")):
-        return True
-    return False
+        retryable = True
+    elif getattr(exc, "status_code", None) in (429, 529, 503) or getattr(exc, "status", None) in (429, 529, 503):
+        retryable = True
+    else:
+        msg = str(exc).lower()
+        if any(keyword in msg for keyword in ("overloaded", "rate limit", "too many requests", "service unavailable", "timed out", "timeout", "connection error")):
+            retryable = True
+    logger.debug("Error retryable=%s: %s: %s", retryable, type(exc).__name__, exc)
+    return retryable
 
 
 def run_audit(
@@ -745,6 +753,11 @@ def run_audit(
 
     if model_name is None:
         model_name = DEFAULT_ANTHROPIC_MODEL if llm_provider == 'anthropic' else DEFAULT_OPENAI_MODEL
+
+    logger.info(
+        "run_audit() starting: provider=%s, model=%s, categories=%d, max_categories=%d, max_sentences=%d",
+        llm_provider, model_name, len(categories_to_audit), max_categories, max_sentences_per_category,
+    )
 
     # Prepare sets for tracking which categories to actually audit
     if completed_categories is None:
@@ -869,10 +882,13 @@ def run_audit(
         if check_stop_fn and check_stop_fn():
             if save_progress_fn:
                 save_progress_fn(_save_current_workbook())
+            logger.warning("Audit stopped by user request at category %d/%d", cat_count, total_categories)
             raise AuditStopRequested("Audit stopped by user request")
 
         if progress_fn:
             progress_fn(cat_count, total_categories, category)
+
+        logger.info("Auditing category %d/%d: %s", cat_count, total_categories, category)
 
         description = category_descriptions.get(category, "None") or "None"
 
@@ -934,6 +950,10 @@ def run_audit(
                 is_retryable = _is_retryable_llm_error(e)
                 if is_retryable and attempt < len(retry_delays):
                     delay = retry_delays[attempt]
+                    logger.warning(
+                        "Category %s: retryable error (%s), retrying in %ds (attempt %d/%d)",
+                        category, type(e).__name__, delay, attempt + 1, len(retry_delays) + 1,
+                    )
                     if save_progress_fn:
                         save_progress_fn(_save_current_workbook())
                     if status_fn:
@@ -953,6 +973,10 @@ def run_audit(
                         time.sleep(delay)
                     continue
                 # Non-retryable error or exhausted retries — save progress and re-raise
+                if is_retryable:
+                    logger.error("Category %s: exhausted all %d retries: %s: %s", category, len(retry_delays) + 1, type(e).__name__, e)
+                else:
+                    logger.error("Category %s: non-retryable error: %s: %s", category, type(e).__name__, e)
                 if save_progress_fn:
                     save_progress_fn(_save_current_workbook())
                 raise
@@ -963,13 +987,16 @@ def run_audit(
         sent_ids = {str(sid) for sid, _ in sent_tuples[:max_sentences_per_category]}
         returned_ids = set(nlp_results.keys())
         if not returned_ids:
+            logger.warning("Category %s: failed to parse LLM response", category)
             warn_fn(f"Category \"{category}\": LLM response could not be parsed. All sentences will have blank audit results.")
         else:
             missing = sent_ids - returned_ids
             extra = returned_ids - sent_ids
             if missing:
+                logger.warning("Category %s: %d/%d sentences missing from LLM response", category, len(missing), len(sent_ids))
                 warn_fn(f"Category \"{category}\": {len(missing)} of {len(sent_ids)} sentences missing from LLM response.")
             if extra:
+                logger.warning("Category %s: LLM returned %d unrecognized sentence IDs", category, len(extra))
                 warn_fn(f"Category \"{category}\": LLM returned {len(extra)} unrecognized sentence IDs.")
 
         # Update the existing sentences rows with judgment results
@@ -1002,6 +1029,8 @@ def run_audit(
     _refresh_auto_filter(ws_findings)
     _refresh_auto_filter(ws_sentences)
 
+    logger.info("Audit completed: %d categories audited", cat_count)
+
     output = BytesIO()
     wb.save(output)
     wb.close()
@@ -1010,6 +1039,7 @@ def run_audit(
 
 
 def run_audit_from_config():
+    logger.info("run_audit_from_config() starting")
     print("Starting script...")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))

@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 import importlib.util
@@ -13,6 +14,8 @@ import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error
+
+logger = logging.getLogger(__name__)
 
 # Main script for streamlit app that uses LLMs to conduct audits of Clarabridge topic models
 
@@ -371,6 +374,11 @@ def get_api_key(provider="ANTHROPIC"):
     return None
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
     # st.cache_data.clear()
 
     organization, audience = get_org_and_audience()
@@ -849,6 +857,7 @@ def main():
         and can_run_audit
     )
     if should_run_audit:
+        logger.info("Audit starting: provider=%s, model=%s", llm_provider, model_name)
         # Mark in-progress immediately so the button renders as "Stop audit"
         st.session_state["audit_in_progress"] = True
         st.session_state["audit_run_requested"] = False
@@ -857,6 +866,7 @@ def main():
         st.session_state["audit_run_requested"] = False
 
     if st.session_state.get("audit_in_progress", False) and not should_run_audit:
+        logger.warning("Stuck state recovery triggered: audit_in_progress=True but no audit running")
         # The audit was marked in-progress by a previous Streamlit run that was
         # interrupted (e.g. user clicked Stop while an LLM call was blocking).
         # The finally block from that run may never have executed, leaving us in
@@ -1054,8 +1064,10 @@ def main():
             st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
             st.session_state["audit_is_partial"] = False
             st.session_state["summary_generation_pending"] = generate_summary
+            logger.info("Audit completed successfully")
             st.success("Audit complete.")
         except AuditStopRequested:
+            logger.warning("Audit stopped by user request")
             st.warning("Audit stopped by user request.")
             partial_bytes = st.session_state.get("partial_audit_bytes")
             if partial_bytes:
@@ -1064,6 +1076,7 @@ def main():
                 st.session_state["audit_is_partial"] = True
                 st.info("Partial audit results are available for download.")
         except Exception as exc:
+            logger.error("Audit failed: %s: %s", type(exc).__name__, exc, exc_info=True)
             st.error(f"Audit failed: {exc}")
             partial_bytes = st.session_state.get("partial_audit_bytes")
             if partial_bytes:
@@ -1135,6 +1148,7 @@ def main():
     )
 
     if st.session_state.get("summary_generation_pending") and can_run_summary:
+        logger.info("Summary generation starting")
         progress_text = None
         progress_bar = None
         stop_button_container = None
@@ -1201,8 +1215,10 @@ def main():
                 progress_bar.progress(1.0)
             st.session_state["audit_output_bytes"] = summary_bytes
             st.session_state["summary_stop_requested"] = False
+            logger.info("Summary generation completed successfully")
             st.success("Audit summary complete.")
         except summarizer_module.SummaryStopRequested:
+            logger.warning("Summary generation stopped by user request")
             st.warning("Summary generation stopped by user request.")
             # Restore the audit bytes without summary so user can download
             if audit_bytes_before_summary:
@@ -1210,6 +1226,7 @@ def main():
                 st.info("Audit results (without summary) are available for download.")
             st.session_state["summary_stop_requested"] = False
         except Exception as exc:
+            logger.error("Summary generation failed: %s: %s", type(exc).__name__, exc, exc_info=True)
             st.error(f"Audit summary failed: {exc}")
             # Audit output is still available from before summary started
             if audit_bytes_before_summary:
