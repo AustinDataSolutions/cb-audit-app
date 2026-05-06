@@ -234,11 +234,16 @@ def _load_yaml(path):
 def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
     load_dotenv()
 
+    # max_retries=0 on both clients disables the SDK's built-in retry layer.
+    # Both SDKs default to 2 internal retries, which fan out *inside* each of
+    # our 4 wrapper attempts (so 4 → 12 actual HTTP calls). Suppressing the
+    # SDK layer makes our retry/backoff schedule the single source of truth
+    # and the "attempt N/4" countdown in the UI accurate.
     if llm_provider == 'anthropic':
         api_key = anthropic_api_key or os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
-        return anthropic.Anthropic(api_key=api_key)
+        return anthropic.Anthropic(api_key=api_key, max_retries=0)
 
     if llm_provider == 'openai':
         if OpenAI is None:
@@ -246,7 +251,7 @@ def _get_llm_client(llm_provider, anthropic_api_key=None, openai_api_key=None):
         api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY environment variable not set")
-        return OpenAI(api_key=api_key)
+        return OpenAI(api_key=api_key, max_retries=0)
 
     raise ValueError("llm_provider must be 'anthropic' or 'openai'")
 
@@ -954,26 +959,43 @@ def run_audit(
         for attempt in range(len(retry_delays) + 1):
             try:
                 def _make_llm_call():
+                    # Streaming on both providers keeps the connection
+                    # active while the model generates, which prevents idle
+                    # TCP disconnects from VPNs / corporate proxies (e.g.
+                    # the 60s NordVPN drop seen on long gpt-5-nano calls)
+                    # and lets Anthropic emit tokens early under load
+                    # instead of holding the whole response until ready.
                     if llm_provider == 'anthropic':
-                        message = client.messages.create(
+                        chunks = []
+                        with client.messages.stream(
                             model=model_name,
                             max_tokens=max_tokens,
                             messages=[
                                 {"role": "user", "content": message_content}
                             ],
                             timeout=httpx.Timeout(llm_timeout, connect=30.0),
-                        )
-                        return message.content[0].text
+                        ) as stream:
+                            for text_chunk in stream.text_stream:
+                                chunks.append(text_chunk)
+                        return "".join(chunks)
                     elif llm_provider == 'openai':
-                        response = client.chat.completions.create(
+                        chunks = []
+                        stream = client.chat.completions.create(
                             model=model_name,
                             max_completion_tokens=max_tokens,
                             messages=[
                                 {"role": "user", "content": message_content}
                             ],
-                            timeout=llm_timeout,
+                            timeout=httpx.Timeout(llm_timeout, connect=30.0),
+                            stream=True,
                         )
-                        return response.choices[0].message.content
+                        for event in stream:
+                            if not event.choices:
+                                continue
+                            delta = event.choices[0].delta
+                            if delta and delta.content:
+                                chunks.append(delta.content)
+                        return "".join(chunks)
                     else:
                         raise ValueError("llm_provider must be 'anthropic' or 'openai'")
 
@@ -1007,11 +1029,23 @@ def run_audit(
                             )
                         time.sleep(delay)
                     continue
-                # Non-retryable error or exhausted retries — save progress and re-raise
+                # Non-retryable error or exhausted retries — record on the
+                # Errors sheet (so the workbook itself documents the failure
+                # for users without server log access), save progress, re-raise.
                 if is_retryable:
                     logger.error("Category %s: exhausted all %d retries: %s: %s", category, len(retry_delays) + 1, type(e).__name__, e)
+                    failure_msg = (
+                        f"Category \"{category}\": exhausted all "
+                        f"{len(retry_delays) + 1} retries with "
+                        f"{type(e).__name__}: {e}"
+                    )
                 else:
                     logger.error("Category %s: non-retryable error: %s: %s", category, type(e).__name__, e)
+                    failure_msg = (
+                        f"Category \"{category}\": non-retryable "
+                        f"{type(e).__name__}: {e}"
+                    )
+                collected_warnings.append(failure_msg)
                 if save_progress_fn:
                     save_progress_fn(_save_current_workbook())
                 raise
