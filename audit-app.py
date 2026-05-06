@@ -262,6 +262,54 @@ def _get_audit_stats(audit_bytes):
         "top_level_categories": top_level_categories,
     }
 
+def _format_audit_failure_message(exc):
+    """Return (lead, suggestions) for a failed-audit exception.
+
+    `lead` is a one-sentence plain-English description of the failure with
+    the raw exception text in parens for copy-paste / debugging. `suggestions`
+    is a list of bulletable hints tailored to the error class — what the user
+    can do besides "try again later." Splits on whether the error is in our
+    retryable set (network / overload / timeout) vs everything else
+    (auth, model name typos, validation, etc.).
+    """
+    raw = f"{type(exc).__name__}: {exc}"
+    if _is_retryable_llm_error(exc):
+        lead = (
+            "The audit failed because the LLM API was unreachable, overloaded, "
+            f"or timed out ({raw}). This is usually temporary, but here are "
+            "options if waiting doesn't fix it."
+        )
+        suggestions = [
+            "**Wait a few minutes and try again** — Anthropic and OpenAI overload "
+            "events typically clear within minutes.",
+            "**Switch model or provider** in the left sidebar. A smaller model "
+            "(e.g. `claude-haiku-4-5` or `gpt-5-mini`) is often available "
+            "when the larger models are overloaded.",
+            "**Reduce \"Max sentences per category\"** in the sidebar. Smaller "
+            "per-call payloads mean shorter LLM responses, which makes "
+            "timeouts and overload errors less likely.",
+            "**Check for a VPN or corporate proxy.** Some networks (NordVPN, "
+            "company firewalls) close idle TCP connections before the LLM "
+            "finishes responding on long calls.",
+        ]
+    else:
+        lead = (
+            "The audit failed with an error that retrying alone won't fix "
+            f"({raw})."
+        )
+        suggestions = [
+            "**Verify the API key** is correct and has remaining quota / "
+            "credits for the selected model.",
+            "**Double-check the model name** in the sidebar — typos and "
+            "unreleased model IDs cause errors that look like this.",
+            "**Try a different model or provider** in the left sidebar.",
+            "If the error mentions tokens, context, or message length, "
+            "**reduce \"Max tokens per request\" or \"Max sentences per "
+            "category\"** in the sidebar.",
+        ]
+    return lead, suggestions
+
+
 def _strip_status_suffixes(base):
     """Remove trailing _checkpoint_YYYY-MM-DD[_HHMM] and _completed_YYYY-MM-DD[_HHMM] suffixes.
 
@@ -1136,7 +1184,9 @@ def main():
                 st.info("Partial audit results are available for download.")
         except Exception as exc:
             logger.error("Audit failed: %s: %s", type(exc).__name__, exc, exc_info=True)
-            st.error(f"Audit failed: {exc}")
+            lead, suggestions = _format_audit_failure_message(exc)
+            bullets = "\n".join(f"- {s}" for s in suggestions)
+            st.error(f"{lead}\n\n**What to try:**\n{bullets}")
             partial_bytes = st.session_state.get("partial_audit_bytes")
             if partial_bytes:
                 st.session_state["audit_output_bytes"] = partial_bytes
@@ -1149,13 +1199,10 @@ def main():
                 st.session_state["audit_output_filename"] = failed_filename
                 st.session_state["audit_is_partial"] = True
                 st.info(
-                    "Partial audit results are available for download. "
-                    "You can re-upload the checkpoint file to continue the audit where it left off."
-                )
-            if _is_retryable_llm_error(exc):
-                st.warning(
-                    "This error was caused by the LLM API being overloaded or rate-limited. "
-                    "You can try again later, or select a different model or provider in the left sidebar."
+                    "A checkpoint of the audit's progress so far is available "
+                    "below. Re-upload it to resume from where it stopped — "
+                    "you can change provider, model, or per-call limits before "
+                    "you do."
                 )
         finally:
             st.session_state["audit_in_progress"] = False
