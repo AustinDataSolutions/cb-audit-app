@@ -337,6 +337,39 @@ class TestDetectPartialAudit:
 
 
 # ===========================================================================
+# _merge_settings_history
+# ===========================================================================
+
+class TestMergeSettingsHistory:
+    def test_appends_new_value(self):
+        assert audit._merge_settings_history("anthropic", "openai") == "anthropic; openai"
+
+    def test_preserves_order(self):
+        assert audit._merge_settings_history("a; b", "c") == "a; b; c"
+
+    def test_dedupes_existing(self):
+        assert audit._merge_settings_history("anthropic", "anthropic") == "anthropic"
+
+    def test_dedupes_within_history(self):
+        assert audit._merge_settings_history("a; b; a", "c") == "a; b; c"
+
+    def test_empty_existing(self):
+        assert audit._merge_settings_history("", "anthropic") == "anthropic"
+        assert audit._merge_settings_history(None, "anthropic") == "anthropic"
+
+    def test_empty_current(self):
+        assert audit._merge_settings_history("anthropic", "") == "anthropic"
+        assert audit._merge_settings_history("anthropic", None) == "anthropic"
+
+    def test_strips_whitespace_in_existing(self):
+        assert audit._merge_settings_history("  a ;  b  ", "c") == "a; b; c"
+
+    def test_both_empty(self):
+        assert audit._merge_settings_history("", "") == ""
+        assert audit._merge_settings_history(None, None) == ""
+
+
+# ===========================================================================
 # _build_category_sentences
 # ===========================================================================
 

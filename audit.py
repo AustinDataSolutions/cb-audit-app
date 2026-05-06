@@ -226,6 +226,29 @@ def _update_setting(ws, key, value):
             return
 
 
+def _merge_settings_history(existing_value, current_value, separator="; "):
+    """Append current_value to a semicolon-separated history if not already present.
+
+    Used when resuming a checkpoint with a potentially different LLM provider
+    or model than the original run, so the Audit Settings sheet preserves the
+    full chain instead of overwriting it. Order of first appearance is
+    preserved; duplicates are collapsed.
+    """
+    history = []
+    seen = set()
+    raw_parts = []
+    if existing_value not in (None, ""):
+        raw_parts.extend(str(existing_value).split(";"))
+    if current_value not in (None, ""):
+        raw_parts.append(str(current_value))
+    for part in raw_parts:
+        cleaned = part.strip()
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            history.append(cleaned)
+    return separator.join(history)
+
+
 def _load_yaml(path):
     with open(path, 'r') as f:
         return yaml.safe_load(f) or {}
@@ -554,10 +577,14 @@ def _load_existing_audit_data(audit_bytes):
     Returns a dict with:
       - sentences_by_category: {category: [(sentence_id, sentence, judgment, explanation), ...]}
       - findings_by_category: {category: description}
+      - llm_provider_history: existing "LLM Provider" cell value (semicolon-joined string) or ""
+      - model_history: existing "Model" cell value (semicolon-joined string) or ""
     """
     result = {
         "sentences_by_category": {},
         "findings_by_category": {},
+        "llm_provider_history": "",
+        "model_history": "",
     }
 
     try:
@@ -619,6 +646,19 @@ def _load_existing_audit_data(audit_bytes):
                     continue
                 description = ws.cell(row=row_idx, column=2).value
                 result["findings_by_category"][topic_str] = description if description else ""
+
+        # Pull provider / model history from the existing Audit Settings sheet
+        # so we can append to it when resuming with a different provider/model
+        # instead of silently overwriting.
+        if "Audit Settings" in wb.sheetnames:
+            ws = wb["Audit Settings"]
+            for row_idx in range(2, ws.max_row + 1):
+                key = ws.cell(row=row_idx, column=1).value
+                value = ws.cell(row=row_idx, column=2).value
+                if key == "LLM Provider":
+                    result["llm_provider_history"] = "" if value is None else str(value)
+                elif key == "Model":
+                    result["model_history"] = "" if value is None else str(value)
 
         wb.close()
     except Exception:
@@ -827,9 +867,18 @@ def run_audit(
         "Max Tokens per Request": max_tokens,
         "Include Summary of Issues": "Yes" if include_summary else "No",
         "Accuracy Threshold": accuracy_threshold if include_summary else "(n/a)",
-        # LLM configuration
-        "LLM Provider": llm_provider,
-        "Model": model_name,
+        # LLM configuration. When resuming from a checkpoint with a different
+        # provider/model, the historical values are preserved by joining with
+        # semicolons rather than overwritten — so the workbook keeps a record
+        # of every (provider, model) used to produce the audit.
+        "LLM Provider": _merge_settings_history(
+            existing_data.get("llm_provider_history") if existing_data else None,
+            llm_provider,
+        ),
+        "Model": _merge_settings_history(
+            existing_data.get("model_history") if existing_data else None,
+            model_name,
+        ),
         "Organization": organization,
         "Audience": audience,
         "Context": model_info or "",
