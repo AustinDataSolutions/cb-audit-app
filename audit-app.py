@@ -890,34 +890,24 @@ def main():
 
     summary_prompt_default = _load_summary_prompt(prompts_path)
 
-    generate_summary = st.checkbox(
-        "Include summary of issues",
-        value=True,
-        key="generate_audit_summary",
-        help="Generates a note summarizing the issues for each topic that failed the audit"
-    )
-    if not generate_summary:
-        st.session_state["summary_generation_pending"] = False
-
-    if generate_summary:
-        with st.expander("Summary settings"):
-            st.text_area(
-                label="Prompt:",
-                value=summary_prompt_default,
-                max_chars=3000,
-                placeholder="Tell the LLM how to summarize audit findings...",
-                help="Sentences are batched by category.",
-                key="summary_prompt",
-            )
-            st.number_input(
-                label="Accuracy threshold:",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.80,
-                step=0.01,
-                help="Categories with accuracy below this threshold will have summaries generated.",
-                key="accuracy_threshold",
-            )
+    with st.expander("Summary settings"):
+        st.text_area(
+            label="Prompt:",
+            value=summary_prompt_default,
+            max_chars=3000,
+            placeholder="Tell the LLM how to summarize audit findings...",
+            help="Sentences are batched by category.",
+            key="summary_prompt",
+        )
+        st.number_input(
+            label="Accuracy threshold:",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.80,
+            step=0.01,
+            help="Categories with accuracy below this threshold will have summaries generated.",
+            key="accuracy_threshold",
+        )
 
     # Determine if we will run the audit this pass, so we can show the correct button
     should_run_audit = (
@@ -1115,7 +1105,7 @@ def main():
                     completed_categories=completed_categories,
                     audit_file_name=uploaded_audit.name,
                     model_tree_name=model_tree.name if model_tree else None,
-                    include_summary=generate_summary,
+                    include_summary=True,
                     summary_prompt=st.session_state.get("summary_prompt", summary_prompt_default),
                     accuracy_threshold=st.session_state.get("accuracy_threshold", 0.80),
                     run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1132,7 +1122,7 @@ def main():
             st.session_state["partial_audit_bytes"] = None
             st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
             st.session_state["audit_is_partial"] = False
-            st.session_state["summary_generation_pending"] = generate_summary
+            st.session_state["summary_generation_pending"] = True
             logger.info("Audit completed successfully")
             st.success("Audit complete.")
         except AuditStopRequested:
