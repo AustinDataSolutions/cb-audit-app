@@ -189,3 +189,5 @@ cython_debug/
 __pycache__/
 *.pyc
 *.pyo
+
+reference/
