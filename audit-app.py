@@ -685,10 +685,12 @@ def main():
 
     model_data = st.session_state.get("model_data")
     include_model_description = False
+    has_imported_description = False
     if model_tree and model_data:
         root_desc = model_data.get("root_description")
         if root_desc:
-            st.markdown(f"**Model description:** {root_desc}")
+            has_imported_description = True
+            st.info(f"**Model description (imported from XML):** {root_desc}")
             include_model_description = st.checkbox(
                 "Include model description in prompts",
                 value=True,
@@ -697,13 +699,26 @@ def main():
         else:
             st.info("No description was found for this model.")
 
-    st.write("Write a short description of the model you're auditing to aid the LLM's understanding.")
-    model_info = st.text_area(
-        "About this model: (optional)",
-        max_chars=1000,
-        value=audit_defaults["model_info"],
-        help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
-        placeholder=f"This model categorizes feedback about the {organization} loyalty program..."
+    # When the XML provides a description, the extra free-text field is just
+    # optional polish — tuck it behind an expander to reduce visual clutter.
+    # Otherwise it's the primary description input and stays inline.
+    notes_container = (
+        st.expander("Add additional information about model")
+        if has_imported_description
+        else st.container()
+    )
+    with notes_container:
+        if not has_imported_description:
+            st.write(
+                "Write a short description of the model you're auditing to aid "
+                "the LLM's understanding."
+            )
+        model_info = st.text_area(
+            "About this model: (optional)",
+            max_chars=1000,
+            value=audit_defaults["model_info"],
+            help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
+            placeholder=f"This model categorizes feedback about the {organization} loyalty program..."
         )
 
     with st.expander("Audit prompt"):
