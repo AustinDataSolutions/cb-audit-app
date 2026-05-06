@@ -276,21 +276,18 @@ def _format_audit_failure_message(exc):
     if _is_retryable_llm_error(exc):
         lead = (
             "The audit failed because the LLM API was unreachable, overloaded, "
-            f"or timed out ({raw}). This is usually temporary, but here are "
-            "options if waiting doesn't fix it."
+            f"or timed out ({raw}). This is usually temporary."
         )
         suggestions = [
-            "**Wait a few minutes and try again** — Anthropic and OpenAI overload "
-            "events typically clear within minutes.",
-            "**Switch model or provider** in the left sidebar. A smaller model "
-            "(e.g. `claude-haiku-4-5` or `gpt-5-mini`) is often available "
-            "when the larger models are overloaded.",
-            "**Reduce \"Max sentences per category\"** in the sidebar. Smaller "
-            "per-call payloads mean shorter LLM responses, which makes "
-            "timeouts and overload errors less likely.",
-            "**Check for a VPN or corporate proxy.** Some networks (NordVPN, "
-            "company firewalls) close idle TCP connections before the LLM "
-            "finishes responding on long calls.",
+            "**Wait a few minutes and try again.**",
+            "**Switch model or provider** in the left sidebar — smaller models "
+            "like `claude-haiku-4-5` or `gpt-5-mini` are often available "
+            "when larger ones aren't.",
+            "**Reduce \"Max sentences per category\"** in the sidebar to send "
+            "fewer sentences for evaluation. (Un-audited sentences will be "
+            "ignored in accuracy calculations.)",
+            "**Try disabling any VPN or corporate proxy.** Some (e.g. NordVPN, "
+            "company firewalls) cut off long LLM requests.",
         ]
     else:
         lead = (
@@ -298,14 +295,12 @@ def _format_audit_failure_message(exc):
             f"({raw})."
         )
         suggestions = [
-            "**Verify the API key** is correct and has remaining quota / "
-            "credits for the selected model.",
-            "**Double-check the model name** in the sidebar — typos and "
-            "unreleased model IDs cause errors that look like this.",
-            "**Try a different model or provider** in the left sidebar.",
-            "If the error mentions tokens, context, or message length, "
-            "**reduce \"Max tokens per request\" or \"Max sentences per "
-            "category\"** in the sidebar.",
+            "**Verify the API key** has quota left for the selected model.",
+            "**Check the model name** in the sidebar for typos.",
+            "**Switch model or provider** in the left sidebar.",
+            "If the error mentions tokens or message length, **reduce "
+            "\"Max tokens per request\" or \"Max sentences per category\"** "
+            "in the sidebar.",
         ]
     return lead, suggestions
 
