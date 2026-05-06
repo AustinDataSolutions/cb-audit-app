@@ -405,12 +405,17 @@ def detect_partial_audit(audit_bytes):
       - completed_categories: set - categories with all sentences judged
       - incomplete_categories: set - categories with some but not all sentences judged
       - unjudged_categories: set - categories with no sentences judged
+      - selected_categories: list - ordered list of all categories the original
+        run was configured to audit (read from Findings col A). Source of truth
+        for resuming the run; locked-in regardless of any model XML the user
+        also uploads.
     """
     result = {
         "is_partial": False,
         "completed_categories": set(),
         "incomplete_categories": set(),
         "unjudged_categories": set(),
+        "selected_categories": [],
     }
 
     try:
@@ -426,10 +431,13 @@ def detect_partial_audit(audit_bytes):
 
         # Find the actual sheet names
         sentences_sheet = None
+        findings_sheet = None
         for name in excel_file.sheet_names:
-            if name.casefold() == "sentences":
+            lower = name.casefold()
+            if lower == "sentences":
                 sentences_sheet = name
-                break
+            elif lower in ("findings", "topics"):
+                findings_sheet = name
 
         if not sentences_sheet:
             return result
@@ -496,6 +504,33 @@ def detect_partial_audit(audit_bytes):
                 result["incomplete_categories"].add(category)
             else:
                 result["completed_categories"].add(category)
+
+        # Pull the ordered, canonical category selection from the Findings
+        # sheet's first column. The Findings sheet is written up front with
+        # one row per selected category, so it preserves the original order
+        # and includes any categories that may have zero sentences in the
+        # Sentences sheet.
+        if findings_sheet:
+            try:
+                findings_df = pd.read_excel(excel_file, sheet_name=findings_sheet)
+                if not findings_df.empty:
+                    topic_col = findings_df.columns[0]
+                    seen = set()
+                    for value in findings_df[topic_col]:
+                        if pd.isna(value):
+                            continue
+                        topic = str(value).strip()
+                        if not topic or topic in seen:
+                            continue
+                        seen.add(topic)
+                        result["selected_categories"].append(topic)
+            except Exception:
+                pass
+
+        # Fallback: if we couldn't read Findings, derive from category_stats
+        # so callers always have a non-empty list when is_partial is True.
+        if not result["selected_categories"]:
+            result["selected_categories"] = list(category_stats.keys())
 
         # If all categories are complete, this is not a partial audit
         if not result["incomplete_categories"] and not result["unjudged_categories"]:

@@ -66,55 +66,99 @@ class TestBuildCompletedFilename:
         mock_file = MagicMock()
         mock_file.name = "my_audit.xlsx"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"my_audit_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"my_audit_completed_{suffix}.xlsx"
 
     def test_strips_sortable_suffix(self):
         app = _load_app_module()
         mock_file = MagicMock()
         mock_file.name = "my_audit_sortable.xlsx"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"my_audit_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"my_audit_completed_{suffix}.xlsx"
 
     def test_no_extension(self):
         app = _load_app_module()
         mock_file = MagicMock()
         mock_file.name = "audit_file"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"audit_file_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"audit_file_completed_{suffix}.xlsx"
 
     def test_no_name_attribute(self):
         app = _load_app_module()
         mock_file = MagicMock(spec=[])  # no .name attribute
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"completed_audit_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"completed_audit_completed_{suffix}.xlsx"
 
-    def test_strips_checkpoint_suffix(self):
+    def test_strips_checkpoint_suffix_legacy_date_only(self):
+        """Old checkpoints used `_checkpoint_YYYY-MM-DD` (no time). Should still strip."""
         app = _load_app_module()
         mock_file = MagicMock()
         mock_file.name = "audit_3_Fraud_07_04_26_checkpoint_2026-04-09.xlsx"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"audit_3_Fraud_07_04_26_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"audit_3_Fraud_07_04_26_completed_{suffix}.xlsx"
 
-    def test_strips_multiple_checkpoint_suffixes(self):
+    def test_strips_checkpoint_suffix_with_time(self):
+        """New checkpoints include `_HHMM`. Should strip that too on re-upload."""
         app = _load_app_module()
         mock_file = MagicMock()
-        mock_file.name = "audit_3_Fraud_07_04_26_checkpoint_2026-04-09_checkpoint_2026-04-09_completed_2026-04-09.xlsx"
+        mock_file.name = "audit_3_Fraud_07_04_26_checkpoint_2026-04-09_1530.xlsx"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"audit_3_Fraud_07_04_26_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"audit_3_Fraud_07_04_26_completed_{suffix}.xlsx"
+
+    def test_strips_multiple_checkpoint_suffixes_mixed_formats(self):
+        app = _load_app_module()
+        mock_file = MagicMock()
+        mock_file.name = (
+            "audit_3_Fraud_07_04_26"
+            "_checkpoint_2026-04-09"  # legacy date-only
+            "_checkpoint_2026-04-09_1530"  # new with time
+            "_completed_2026-04-09_1645"
+            ".xlsx"
+        )
+        result = app._build_completed_filename(mock_file)
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"audit_3_Fraud_07_04_26_completed_{suffix}.xlsx"
 
     def test_strips_completed_suffix_on_reupload(self):
         app = _load_app_module()
         mock_file = MagicMock()
         mock_file.name = "my_audit_completed_2026-04-01.xlsx"
         result = app._build_completed_filename(mock_file)
-        today = datetime.now().strftime("%Y-%m-%d")
-        assert result == f"my_audit_completed_{today}.xlsx"
+        suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
+        assert result == f"my_audit_completed_{suffix}.xlsx"
+
+
+# ===========================================================================
+# _strip_status_suffixes
+# ===========================================================================
+
+class TestStripStatusSuffixes:
+    def test_strips_legacy_date_only(self):
+        app = _load_app_module()
+        assert app._strip_status_suffixes("foo_checkpoint_2026-04-09") == "foo"
+        assert app._strip_status_suffixes("foo_completed_2026-04-09") == "foo"
+
+    def test_strips_new_with_time(self):
+        app = _load_app_module()
+        assert app._strip_status_suffixes("foo_checkpoint_2026-04-09_1530") == "foo"
+        assert app._strip_status_suffixes("foo_completed_2026-04-09_1530") == "foo"
+
+    def test_strips_repeated_suffixes(self):
+        app = _load_app_module()
+        result = app._strip_status_suffixes(
+            "foo_checkpoint_2026-04-09_checkpoint_2026-04-09_1530_completed_2026-04-10_0900"
+        )
+        assert result == "foo"
+
+    def test_leaves_unrelated_dates_alone(self):
+        """A date inside the base name (not at the end with _checkpoint/_completed prefix) shouldn't be stripped."""
+        app = _load_app_module()
+        assert app._strip_status_suffixes("audit_2026-04-09_data") == "audit_2026-04-09_data"
 
 
 # ===========================================================================

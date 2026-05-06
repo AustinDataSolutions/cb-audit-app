@@ -21,8 +21,13 @@ audit = _load_module("audit.py", "audit")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_audit_workbook(sentences_data):
-    """Build a minimal audit workbook from (id, sentence, topic, audit, explanation) tuples."""
+def _build_audit_workbook(sentences_data, findings_topics=None):
+    """Build a minimal audit workbook from (id, sentence, topic, audit, explanation) tuples.
+
+    If ``findings_topics`` is provided, it's an ordered list of topics that
+    will be written to the Findings sheet column A. Otherwise the Findings
+    sheet contains only a header row (legacy behavior).
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "Sentences"
@@ -32,6 +37,9 @@ def _build_audit_workbook(sentences_data):
 
     ws_findings = wb.create_sheet("Findings")
     ws_findings.append(["Topic", "Description", "Accuracy", "Issues"])
+    if findings_topics:
+        for topic in findings_topics:
+            ws_findings.append([topic, "None", "", "Not yet audited"])
 
     output = BytesIO()
     wb.save(output)
@@ -287,6 +295,45 @@ class TestDetectPartialAudit:
     def test_invalid_bytes(self):
         result = audit.detect_partial_audit(b"not an excel file")
         assert result["is_partial"] is False
+
+    def test_selected_categories_from_findings(self):
+        """selected_categories should be ordered by Findings col A, even when
+        some categories have zero sentences (which can happen for topics
+        with no rules in the original input)."""
+        wb_bytes = _build_audit_workbook(
+            [
+                (1, "S1", "TopicA", "YES", "Good"),
+                (2, "S2", "TopicB", "", ""),
+            ],
+            # TopicC appears in Findings but has no sentences — must still
+            # appear in selected_categories.
+            findings_topics=["TopicA", "TopicB", "TopicC"],
+        )
+        result = audit.detect_partial_audit(wb_bytes)
+        assert result["is_partial"] is True
+        assert result["selected_categories"] == ["TopicA", "TopicB", "TopicC"]
+
+    def test_selected_categories_fallback_when_findings_empty(self):
+        """If Findings has only a header row, fall back to category_stats keys
+        (preserves legacy behavior so callers always have a non-empty list
+        when is_partial is True)."""
+        wb_bytes = _build_audit_workbook(
+            [
+                (1, "S1", "TopicA", "YES", "Good"),
+                (2, "S2", "TopicB", "", ""),
+            ],
+            findings_topics=None,
+        )
+        result = audit.detect_partial_audit(wb_bytes)
+        assert result["is_partial"] is True
+        assert set(result["selected_categories"]) == {"TopicA", "TopicB"}
+
+    def test_selected_categories_empty_when_not_audit_format(self):
+        wb_bytes = _make_workbook_bytes({
+            "Data": [["Col1", "Col2"], ["v1", "v2"]],
+        })
+        result = audit.detect_partial_audit(wb_bytes)
+        assert result["selected_categories"] == []
 
 
 # ===========================================================================

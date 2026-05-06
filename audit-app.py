@@ -263,8 +263,45 @@ def _get_audit_stats(audit_bytes):
     }
 
 def _strip_status_suffixes(base):
-    """Remove trailing _checkpoint_YYYY-MM-DD and _completed_YYYY-MM-DD suffixes."""
-    return re.sub(r"(_(?:checkpoint|completed)_\d{4}-\d{2}-\d{2})+$", "", base)
+    """Remove trailing _checkpoint_YYYY-MM-DD[_HHMM] and _completed_YYYY-MM-DD[_HHMM] suffixes.
+
+    The optional `_HHMM` segment is matched so checkpoints saved on the same
+    day across different runs don't collide on filename. Older date-only
+    suffixes are still stripped via the `(?:_\\d{4})?` group.
+    """
+    return re.sub(r"(_(?:checkpoint|completed)_\d{4}-\d{2}-\d{2}(?:_\d{4})?)+$", "", base)
+
+def _render_locked_topic_list(partial_detection):
+    """Render a read-only list of the checkpoint's locked topic selection.
+
+    Used in place of the streamlit_tree_select widget when a checkpoint is
+    uploaded — the run's topic list is fixed to whatever the original run was
+    configured with, so the full model tree is hidden to avoid implying it
+    can be changed.
+    """
+    selected = partial_detection.get("selected_categories", []) or []
+    completed = partial_detection.get("completed_categories", set()) or set()
+    incomplete = partial_detection.get("incomplete_categories", set()) or set()
+    st.caption(
+        f"Topic selection is locked to the {len(selected)} categories in the "
+        f"uploaded checkpoint. The full model tree is hidden while resuming a "
+        f"checkpoint."
+    )
+    if not selected:
+        return
+    with st.expander(f"View locked topic list ({len(selected)} topics)", expanded=False):
+        lines = []
+        for topic in selected:
+            if topic in completed:
+                marker = "✓"
+            elif topic in incomplete:
+                marker = "↻"
+            else:
+                marker = "○"
+            lines.append(f"- {marker} {topic}")
+        st.markdown("\n".join(lines))
+        st.caption("✓ completed   ↻ partially audited (will be re-audited)   ○ not yet audited")
+
 
 def _build_completed_filename(uploaded_file):
     original_name = getattr(uploaded_file, "name", "") or "completed_audit.xlsx"
@@ -274,7 +311,10 @@ def _build_completed_filename(uploaded_file):
     base = _strip_status_suffixes(base)
     if not ext:
         ext = ".xlsx"
-    date_suffix = datetime.now().strftime("%Y-%m-%d")
+    # Include HH-MM so multiple runs on the same day produce distinct
+    # filenames; otherwise the browser appends "(1)", "(2)" suffixes that
+    # look like an ordered checkpoint sequence but aren't.
+    date_suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
     return f"{base}_completed_{date_suffix}{ext}"
 
 def _get_node_field(element, field_name):
@@ -460,11 +500,17 @@ def main():
             completed_count = len(partial_detection.get("completed_categories", set()))
             incomplete_count = len(partial_detection.get("incomplete_categories", set()))
             unjudged_count = len(partial_detection.get("unjudged_categories", set()))
+            selected_categories = partial_detection.get("selected_categories", []) or []
+            # Lock the run's topic list to the checkpoint's original selection so
+            # successive resume attempts can't silently change which topics get
+            # audited (which is what produced Harold's confusing 71/72/59 set).
+            st.session_state["topics_to_audit"] = list(selected_categories)
             st.warning(
-                f"You updated an audit checkpoint. "
+                f"You uploaded an audit checkpoint with {len(selected_categories)} topics "
                 f"({completed_count} completed, {incomplete_count} incomplete, {unjudged_count} not yet audited). "
-                f"This program will only audit the categories that have not been completed yet, "
-                f"and any partially-audited category will be re-audited entirely."
+                f"Topic selection is locked to the categories in the checkpoint — "
+                f"only not-yet-completed categories will be re-audited, and any partially-audited "
+                f"category will be re-audited entirely."
             )
 
         # Reformat functionality
@@ -514,9 +560,14 @@ def main():
                 return
             st.session_state["model_data"] = model_data
             st.session_state["model_source_name"] = model_tree.name
-            st.session_state["topics_to_audit"] = [
-                node["path"] for node in model_data["nodes"].values() if node.get("path")
-            ]
+            # Don't override topics_to_audit when a checkpoint is loaded — the
+            # checkpoint's selected_categories are the canonical run list and
+            # were already written to session state above.
+            partial_detection = st.session_state.get("partial_audit_detection", {})
+            if not partial_detection.get("is_partial"):
+                st.session_state["topics_to_audit"] = [
+                    node["path"] for node in model_data["nodes"].values() if node.get("path")
+                ]
 
         model_data = st.session_state.get("model_data")
         if not model_data:
@@ -554,25 +605,38 @@ def main():
             st.caption(f"{model_data['model_name']}")
 
         tree_busy = st.session_state.get("audit_in_progress", False) or st.session_state.get("audit_run_requested", False)
-        if tree_busy:
-            st.caption("Topic selection is disabled while an audit is running.")
+        partial_detection = st.session_state.get("partial_audit_detection", {})
+        is_partial_audit = partial_detection.get("is_partial", False)
 
-        @st.fragment
-        def _render_tree():
-            tree_state = tree_select(
-                model_data["tree_nodes"],
-                checked=st.session_state.get("topics_to_audit", []),
-                key="topics_tree",
-                disabled=tree_busy,
-            )
+        if is_partial_audit:
+            # Skip the tree widget entirely when resuming a checkpoint. Showing
+            # the full XML tree alongside a partial selection is misleading;
+            # render a read-only list of just the checkpoint's topics instead.
+            _render_locked_topic_list(partial_detection)
+        else:
+            if tree_busy:
+                st.caption("Topic selection is disabled while an audit is running.")
 
-            # Only update selected topics if not busy (prevent changes during audit)
-            if not tree_busy:
-                st.session_state["topics_to_audit"] = tree_state.get("checked", [])
+            @st.fragment
+            def _render_tree():
+                tree_state = tree_select(
+                    model_data["tree_nodes"],
+                    checked=st.session_state.get("topics_to_audit", []),
+                    key="topics_tree",
+                    disabled=tree_busy,
+                )
 
-        _render_tree()
+                # Only update selected topics if not busy (prevent changes during audit)
+                if not tree_busy:
+                    st.session_state["topics_to_audit"] = tree_state.get("checked", [])
 
-        st.write("Note: Topics with no rules will not appear in audit output, even if selected in model tree.")
+            _render_tree()
+
+            st.write("Note: Topics with no rules will not appear in audit output, even if selected in model tree.")
+    elif uploaded_audit and st.session_state.get("partial_audit_detection", {}).get("is_partial"):
+        # Checkpoint uploaded without a model XML — still surface the locked list
+        # so the user can see what will be re-audited.
+        _render_locked_topic_list(st.session_state["partial_audit_detection"])
 
     st.subheader("Add context")
 
