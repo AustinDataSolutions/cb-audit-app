@@ -14,8 +14,81 @@ import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error
+from audit_email import send_audit_email, is_valid_email
 
 logger = logging.getLogger(__name__)
+
+
+def _smtp_config():
+    """Pull SMTP settings from Streamlit secrets (all optional)."""
+    return {
+        "host": st.secrets.get("SMTP_HOST"),
+        "port": st.secrets.get("SMTP_PORT", 587),
+        "user": st.secrets.get("SMTP_USER"),
+        "password": st.secrets.get("SMTP_PASSWORD"),
+        "sender": st.secrets.get("EMAIL_FROM"),
+    }
+
+
+def _email_configured():
+    """True when the secrets needed to actually send mail are all present."""
+    cfg = _smtp_config()
+    return all(cfg.get(k) for k in ("host", "user", "password", "sender"))
+
+
+def _maybe_email_results(context_label):
+    """Email the current audit output if the user opted in.
+
+    Reads the just-set ``audit_output_bytes``/``audit_output_filename`` session
+    keys, so call this *after* a success/stop/error path has populated them.
+    Never raises: emailing is best-effort and the download button is always the
+    fallback. *context_label* describes the run state for the email body
+    (e.g. "completed", "stopped before finishing").
+    """
+    if not st.session_state.get("email_results_enabled"):
+        return
+    address = (st.session_state.get("email_results_address") or "").strip()
+    if not is_valid_email(address):
+        st.warning(
+            "Results not emailed: enter a valid address next to "
+            "“Email results to me.”"
+        )
+        return
+    if not _email_configured():
+        st.warning(
+            "Results not emailed: email sending isn't configured "
+            "(missing SMTP settings in secrets)."
+        )
+        return
+    output_bytes = st.session_state.get("audit_output_bytes")
+    filename = st.session_state.get("audit_output_filename") or "audit.xlsx"
+    if not output_bytes:
+        return
+    cfg = _smtp_config()
+    try:
+        send_audit_email(
+            smtp_host=cfg["host"],
+            smtp_port=cfg["port"],
+            smtp_user=cfg["user"],
+            smtp_password=cfg["password"],
+            sender=cfg["sender"],
+            recipient=address,
+            subject=f"Audit results ({context_label}): {filename}",
+            body=(
+                f"Your audit run has finished ({context_label}).\n\n"
+                f"The workbook is attached: {filename}\n"
+            ),
+            attachment_bytes=output_bytes,
+            attachment_filename=filename,
+        )
+        st.success(f"Results emailed to {address}.")
+        logger.info("Audit results emailed to %s (%s)", address, context_label)
+    except Exception as exc:
+        logger.error("Failed to email audit results: %s", exc, exc_info=True)
+        st.warning(
+            f"Audit finished but emailing the results failed: {exc}. "
+            "You can still download the file below."
+        )
 
 # Main script for streamlit app that uses LLMs to conduct audits of Clarabridge topic models
 
@@ -1006,6 +1079,31 @@ def main():
         st.session_state["audit_stop_requested"] = False
         st.rerun()
 
+    # Opt-in email delivery — survives Streamlit Cloud winding the app down
+    # before the user can download.  Rendered every pass so the widget values
+    # persist in session_state through the run.
+    email_enabled = st.checkbox(
+        "Email results to me",
+        value=True,
+        key="email_results_enabled",
+        help=(
+            "When the audit finishes (or stops/errors with partial results), "
+            "email the workbook as an attachment. Useful if the app is put to "
+            "sleep before you can download it."
+        ),
+    )
+    if email_enabled:
+        st.text_input(
+            "Send results to (email address):",
+            key="email_results_address",
+            placeholder="you@example.com",
+        )
+        if not _email_configured():
+            st.caption(
+                "⚠️ Email sending isn't configured yet — ask an admin to add "
+                "SMTP settings to the app secrets."
+            )
+
     if st.session_state.get("audit_in_progress", False):
         st.button(
             "Stop audit",
@@ -1183,6 +1281,7 @@ def main():
             st.session_state["summary_generation_pending"] = True
             logger.info("Audit completed successfully")
             st.success("Audit complete.")
+            _maybe_email_results("completed")
         except AuditStopRequested:
             logger.warning("Audit stopped by user request")
             st.warning("Audit stopped by user request.")
@@ -1192,6 +1291,7 @@ def main():
                 st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
                 st.session_state["audit_is_partial"] = True
                 st.info("Partial audit results are available for download.")
+                _maybe_email_results("stopped before finishing — partial results")
         except Exception as exc:
             logger.error("Audit failed: %s: %s", type(exc).__name__, exc, exc_info=True)
             lead, suggestions = _format_audit_failure_message(exc)
@@ -1214,6 +1314,7 @@ def main():
                     "you can change provider, model, or per-call limits before "
                     "you do."
                 )
+                _maybe_email_results("stopped on an error — partial checkpoint")
         finally:
             st.session_state["audit_in_progress"] = False
             st.session_state["audit_stop_requested"] = False

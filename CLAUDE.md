@@ -16,7 +16,9 @@ topics.
 5. (Optional) Generate summaries for low-accuracy topics
 
 ### Configuration
-- `.streamlit/secrets.toml`: APP_PASSWORD, ANTHROPIC_API_KEY, OPENAI_API_KEY
+- `.streamlit/secrets.toml`: APP_PASSWORD, ANTHROPIC_API_KEY, OPENAI_API_KEY,
+  and optional SMTP settings (SMTP_HOST/PORT/USER/PASSWORD, EMAIL_FROM) that
+  enable the "Email results to me" delivery option
 - `config.yaml`: default provider/model and limits for UI and CLI
 - `prompts.yaml`: audit and summary prompt templates
 
