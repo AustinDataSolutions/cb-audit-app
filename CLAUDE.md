@@ -72,7 +72,8 @@ LLM calls have a 300s timeout (`DEFAULT_LLM_TIMEOUT`). Retryable errors (429,
 
 ### Streamlit session state keys
 - `audit_in_progress`: True while audit is running
-- `partial_audit_bytes`: latest saved workbook bytes (updated after each category)
+- `partial_audit_bytes`: latest saved workbook bytes (saved every
+  `CHECKPOINT_INTERVAL` categories, on the last category, and on retry/stop/error)
 - `audit_output_bytes`: final or promoted partial output for download
 - `audit_stop_requested` / `summary_stop_requested`: stop signal flags
 - `audit_is_partial`: whether current output is incomplete

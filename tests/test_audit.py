@@ -294,6 +294,75 @@ class TestCallLlmWithStatus:
 
 
 # ===========================================================================
+# run_audit checkpoint throttling
+# ===========================================================================
+
+class _FakeStream:
+    def __init__(self, text):
+        self._text = text
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    @property
+    def text_stream(self):
+        yield self._text
+
+
+class _FakeMessages:
+    def stream(self, **kwargs):
+        # A response that parses cleanly for sentence ID 1 in every category.
+        return _FakeStream("ID: 1 - Judgment: YES - Reasoning: ok\n")
+
+
+class _FakeClient:
+    def __init__(self):
+        self.messages = _FakeMessages()
+
+
+def _input_bytes_with_categories(n):
+    rows = [["#", "Sentences", "Category"]]
+    for i in range(1, n + 1):
+        rows.append([1, f"sentence for category {i}", f"cat{i:02d}"])
+    return _make_workbook_bytes({"Sentences": rows})
+
+
+class TestCheckpointThrottling:
+    def _run(self, audit, n_categories):
+        save_calls = []
+        with patch.object(audit, "_get_llm_client", return_value=_FakeClient()):
+            audit.run_audit(
+                audit_excel_bytes=_input_bytes_with_categories(n_categories),
+                prompt_template="Audit {category}: {sentences_text}",
+                llm_provider="anthropic",
+                model_name="fake-model",
+                save_progress_fn=lambda b: save_calls.append(b),
+            )
+        return save_calls
+
+    def test_saves_every_interval_plus_last(self):
+        """12 categories at interval 5 → saves at 5, 10, and the final (12)."""
+        assert audit.CHECKPOINT_INTERVAL == 5
+        save_calls = self._run(audit, 12)
+        assert len(save_calls) == 3
+        # Each saved checkpoint is non-empty workbook bytes.
+        assert all(isinstance(b, (bytes, bytearray)) and b for b in save_calls)
+
+    def test_interval_boundary_not_double_saved(self):
+        """10 categories → last (10) is also a multiple of 5; saved once, not twice."""
+        save_calls = self._run(audit, 10)
+        assert len(save_calls) == 2
+
+    def test_short_run_still_saves_last(self):
+        """Fewer categories than the interval still checkpoints the final one."""
+        save_calls = self._run(audit, 3)
+        assert len(save_calls) == 1
+
+
+# ===========================================================================
 # detect_partial_audit
 # ===========================================================================
 

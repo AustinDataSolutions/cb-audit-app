@@ -33,6 +33,11 @@ DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
+# Save a checkpoint every Nth completed category instead of after every one.
+# Each save re-serializes the whole (growing) workbook and re-sends it to the
+# browser, so saving every category is O(n^2) work that drags on long runs.
+# The trade-off: an abrupt interruption can lose up to N-1 categories of work.
+CHECKPOINT_INTERVAL = 5
 COLUMN_WIDTH_PX = 300
 COLUMN_WIDTH_CHAR = round(COLUMN_WIDTH_PX / 7.0, 2)
 FINDINGS_HEADERS = ["Topic", "Description", "Accuracy", "Issues"]
@@ -1159,8 +1164,13 @@ def run_audit(
         findings_row = findings_row_map[category]
         ws_findings.cell(row=findings_row, column=4, value="")
 
-        # Save progress after each category completes
-        if save_progress_fn:
+        # Checkpoint every CHECKPOINT_INTERVAL categories (and always on the
+        # last one) rather than after every category, to avoid the O(n^2) cost
+        # of re-serializing and re-sending the whole workbook each time.
+        is_last_category = cat_count == total_categories
+        if save_progress_fn and (
+            cat_count % CHECKPOINT_INTERVAL == 0 or is_last_category
+        ):
             save_progress_fn(_save_current_workbook())
 
     # Record finish time
