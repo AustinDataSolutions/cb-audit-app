@@ -13,7 +13,7 @@ import hmac
 import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
-from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error
+from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL
 from audit_email import send_audit_email, is_valid_email
 
 logger = logging.getLogger(__name__)
@@ -1052,6 +1052,10 @@ def main():
         st.session_state["audit_in_progress"] = True
         st.session_state["audit_run_requested"] = False
         st.session_state["summary_generation_pending"] = False
+        # Reset checkpoint tracking so a fresh run doesn't show a stale
+        # "saved through topic X" line from a previous run.
+        st.session_state["last_checkpoint_topic"] = None
+        st.session_state["audit_current_topic"] = None
     elif st.session_state.get("audit_run_requested", False) and not can_run_audit:
         st.session_state["audit_run_requested"] = False
 
@@ -1123,6 +1127,9 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="stop_area_partial_download",
             )
+            last_cp_topic = st.session_state.get("last_checkpoint_topic")
+            if last_cp_topic:
+                st.caption(f"File contains progress through topic {last_cp_topic}")
     elif st.session_state.get("warnings_confirmation_needed", False):
         st.warning("Please review the warnings above before proceeding.")
         col1, col2 = st.columns([1, 1])
@@ -1181,13 +1188,42 @@ def main():
                 progress_text = progress_container.empty()
                 progress_bar = progress_container.progress(0)
                 status_text = progress_container.empty()
+                checkpoint_text = progress_container.empty()
                 download_container = progress_container.empty()
+
+                def _next_checkpoint_topic(current, total):
+                    """The topic number the next checkpoint will land on.
+
+                    Checkpoints fire on multiples of CHECKPOINT_INTERVAL and
+                    always on the final topic, so the next one is the smallest
+                    multiple >= current, capped at the total.
+                    """
+                    if not total:
+                        return current
+                    rounded_up = (
+                        (current + CHECKPOINT_INTERVAL - 1) // CHECKPOINT_INTERVAL
+                    ) * CHECKPOINT_INTERVAL
+                    return min(rounded_up, total)
 
                 def _update_progress(current, total, category_name):
                     progress_text.write(
                         f"Auditing category {current} of {total}: {category_name}"
                     )
                     progress_bar.progress(current / total if total else 0)
+                    st.session_state["audit_current_topic"] = current
+                    last = st.session_state.get("last_checkpoint_topic")
+                    next_cp = _next_checkpoint_topic(current, total)
+                    if last:
+                        checkpoint_text.caption(
+                            f"✓ Checkpoint saved through topic {last}; "
+                            f"next at topic {next_cp}"
+                        )
+                    else:
+                        checkpoint_text.caption(
+                            f"Progress is saved as a checkpoint every "
+                            f"{CHECKPOINT_INTERVAL} topics. First checkpoint "
+                            f"after topic {next_cp}."
+                        )
 
                 def _update_status(message):
                     if message:
@@ -1196,7 +1232,7 @@ def main():
                         status_text.empty()
 
                 @st.fragment
-                def _render_download_button(partial_bytes, partial_filename, button_key):
+                def _render_download_button(partial_bytes, partial_filename, button_key, caption_text):
                     st.download_button(
                         label="Download audit checkpoint (.xlsx)",
                         data=partial_bytes,
@@ -1204,11 +1240,20 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key=button_key,
                     )
+                    if caption_text:
+                        st.caption(caption_text)
 
                 def _save_progress(partial_bytes):
                     st.session_state["partial_audit_bytes"] = partial_bytes
+                    # Record which topic this checkpoint covers so the UI can
+                    # tell the user the download lags the live progress.
+                    last = st.session_state.get("audit_current_topic")
+                    st.session_state["last_checkpoint_topic"] = last
                     # Update the download button with the latest partial results
                     partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_checkpoint")
+                    caption_text = (
+                        f"File contains progress through topic {last}" if last else ""
+                    )
                     with download_container:
                         partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
                         st.session_state["partial_download_counter"] = partial_download_counter
@@ -1216,6 +1261,7 @@ def main():
                             partial_bytes,
                             partial_filename,
                             f"download_checkpoint_{partial_download_counter}",
+                            caption_text,
                         )
 
                 def _check_stop():
@@ -1273,6 +1319,7 @@ def main():
                 progress_text.empty()
                 progress_bar.empty()
                 status_text.empty()
+                checkpoint_text.empty()
                 download_container.empty()
             st.session_state["audit_output_bytes"] = output_bytes
             st.session_state["partial_audit_bytes"] = None
