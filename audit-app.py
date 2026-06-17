@@ -1,7 +1,6 @@
 import logging
 import os
 from datetime import datetime
-import importlib.util
 import re
 from io import BytesIO
 import streamlit as st
@@ -13,8 +12,8 @@ import hmac
 import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
-from audit import run_audit, AuditStopRequested, detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL
-from audit_email import send_audit_email, is_valid_email
+from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL
+import audit_worker
 
 logger = logging.getLogger(__name__)
 
@@ -36,59 +35,9 @@ def _email_configured():
     return all(cfg.get(k) for k in ("host", "user", "password", "sender"))
 
 
-def _maybe_email_results(context_label):
-    """Email the current audit output if the user opted in.
-
-    Reads the just-set ``audit_output_bytes``/``audit_output_filename`` session
-    keys, so call this *after* a success/stop/error path has populated them.
-    Never raises: emailing is best-effort and the download button is always the
-    fallback. *context_label* describes the run state for the email body
-    (e.g. "completed", "stopped before finishing").
-    """
-    if not st.session_state.get("email_results_enabled"):
-        return
-    address = (st.session_state.get("email_results_address") or "").strip()
-    if not is_valid_email(address):
-        st.warning(
-            "Results not emailed: enter a valid address next to "
-            "“Email results to me.”"
-        )
-        return
-    if not _email_configured():
-        st.warning(
-            "Results not emailed: email sending isn't configured "
-            "(missing SMTP settings in secrets)."
-        )
-        return
-    output_bytes = st.session_state.get("audit_output_bytes")
-    filename = st.session_state.get("audit_output_filename") or "audit.xlsx"
-    if not output_bytes:
-        return
-    cfg = _smtp_config()
-    try:
-        send_audit_email(
-            smtp_host=cfg["host"],
-            smtp_port=cfg["port"],
-            smtp_user=cfg["user"],
-            smtp_password=cfg["password"],
-            sender=cfg["sender"],
-            recipient=address,
-            subject=f"Audit results ({context_label}): {filename}",
-            body=(
-                f"Your audit run has finished ({context_label}).\n\n"
-                f"The workbook is attached: {filename}\n"
-            ),
-            attachment_bytes=output_bytes,
-            attachment_filename=filename,
-        )
-        st.success(f"Results emailed to {address}.")
-        logger.info("Audit results emailed to %s (%s)", address, context_label)
-    except Exception as exc:
-        logger.error("Failed to email audit results: %s", exc, exc_info=True)
-        st.warning(
-            f"Audit finished but emailing the results failed: {exc}. "
-            "You can still download the file below."
-        )
+# Email delivery now runs inside the background worker (audit_worker._send_email)
+# so the workbook is sent even when no browser is attached at finish; the UI only
+# surfaces the recorded email_status. See _finalize_job_into_session below.
 
 # Main script for streamlit app that uses LLMs to conduct audits of Clarabridge topic models
 
@@ -246,16 +195,6 @@ def _load_app_defaults(config_path):
     return defaults
 
 
-def _load_summarizer_module():
-    module_path = os.path.join(os.path.dirname(__file__), "audit-report-summarizer.py")
-    spec = importlib.util.spec_from_file_location("audit_report_summarizer", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError("Unable to load audit-report-summarizer module.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def _normalize_topic(value):
     text = str(value).strip()
     return " ".join(text.split())
@@ -335,18 +274,16 @@ def _get_audit_stats(audit_bytes):
         "top_level_categories": top_level_categories,
     }
 
-def _format_audit_failure_message(exc):
-    """Return (lead, suggestions) for a failed-audit exception.
+def _format_audit_failure_message(raw, is_retryable):
+    """Return (lead, suggestions) for a failed-audit error.
 
-    `lead` is a one-sentence plain-English description of the failure with
-    the raw exception text in parens for copy-paste / debugging. `suggestions`
-    is a list of bulletable hints tailored to the error class — what the user
-    can do besides "try again later." Splits on whether the error is in our
-    retryable set (network / overload / timeout) vs everything else
-    (auth, model name typos, validation, etc.).
+    `raw` is the "ExcType: message" string for copy-paste / debugging, and
+    `is_retryable` says whether the error is in our retryable set (network /
+    overload / timeout) vs everything else (auth, model name typos, validation).
+    The classification is captured by the worker at failure time (the original
+    exception object isn't available when the UI later renders the outcome).
     """
-    raw = f"{type(exc).__name__}: {exc}"
-    if _is_retryable_llm_error(exc):
+    if is_retryable:
         lead = (
             "The audit failed because the LLM API was unreachable, overloaded, "
             f"or timed out ({raw}). This is usually temporary."
@@ -432,6 +369,32 @@ def _build_completed_filename(uploaded_file):
     # look like an ordered checkpoint sequence but aren't.
     date_suffix = datetime.now().strftime("%Y-%m-%d_%H%M")
     return f"{base}_completed_{date_suffix}{ext}"
+
+
+def _checkpoint_filename(uploaded_file):
+    """The checkpoint (partial) variant of the completed-audit filename."""
+    name = _build_completed_filename(uploaded_file)
+    if "_completed" in name:
+        return name.replace("_completed", "_checkpoint")
+    if "_checkpoint" not in name:
+        base, ext = os.path.splitext(name)
+        return f"{base}_checkpoint{ext}"
+    return name
+
+
+def _next_checkpoint_topic(current, total):
+    """Topic the next checkpoint will land on.
+
+    Checkpoints fire on multiples of CHECKPOINT_INTERVAL and always on the final
+    topic, so the next one is the smallest multiple >= current, capped at total.
+    """
+    if not total:
+        return current
+    rounded_up = (
+        (current + CHECKPOINT_INTERVAL - 1) // CHECKPOINT_INTERVAL
+    ) * CHECKPOINT_INTERVAL
+    return min(rounded_up, total)
+
 
 def _get_node_field(element, field_name):
     value = element.get(field_name)
@@ -550,24 +513,18 @@ def main():
 
     st.title(f"{org_for_title}Automatic Audit")
     st.write("This app uses an LLM to audit the accuracy of CX Designer models, and provides a summary of the findings by category.")
-    if "audit_in_progress" not in st.session_state:
-        st.session_state["audit_in_progress"] = False
     if "audit_run_requested" not in st.session_state:
         st.session_state["audit_run_requested"] = False
-    if "partial_audit_bytes" not in st.session_state:
-        st.session_state["partial_audit_bytes"] = None
-    if "audit_stop_requested" not in st.session_state:
-        st.session_state["audit_stop_requested"] = False
-    if "summary_stop_requested" not in st.session_state:
-        st.session_state["summary_stop_requested"] = False
 
     if "warnings_acknowledged" not in st.session_state:
         st.session_state["warnings_acknowledged"] = False
 
+    # The background-worker registry lives in the process (not session_state),
+    # so a websocket reconnect / rerun re-attaches to the same running job.
+    registry = audit_worker.get_registry()
+
     def _queue_audit_run():
         st.session_state["audit_run_requested"] = True
-        st.session_state["partial_audit_bytes"] = None
-        st.session_state["audit_stop_requested"] = False
 
     def _queue_audit_run_with_warning_check():
         """Request audit, but if there are pre-flight warnings, require confirmation first."""
@@ -584,9 +541,6 @@ def main():
 
     def _cancel_warnings():
         st.session_state["warnings_confirmation_needed"] = False
-
-    def _request_audit_stop():
-        st.session_state["audit_stop_requested"] = True
 
     st.subheader("Upload audit file")
     # st.write("Upload an audit file generated by CX Designer.")
@@ -720,7 +674,7 @@ def main():
         if model_data.get("model_name"):
             st.caption(f"{model_data['model_name']}")
 
-        tree_busy = st.session_state.get("audit_in_progress", False) or st.session_state.get("audit_run_requested", False)
+        tree_busy = registry.active() is not None or st.session_state.get("audit_run_requested", False)
         partial_detection = st.session_state.get("partial_audit_detection", {})
         is_partial_audit = partial_detection.get("is_partial", False)
 
@@ -1040,48 +994,25 @@ def main():
             key="accuracy_threshold",
         )
 
-    # Determine if we will run the audit this pass, so we can show the correct button
+    # Re-attach to a job still running from a previous script run / session.
+    # The registry lives in the process, so a websocket reconnect (which can
+    # spin up a fresh session with empty session_state) re-finds the live run.
+    active_job = registry.active()
+    if active_job is not None and not st.session_state.get("active_run_id"):
+        st.session_state["active_run_id"] = active_job.run_id
+
+    # Launch trigger: a run was requested and nothing is currently active.
     should_run_audit = (
         st.session_state.get("audit_run_requested", False)
-        and not st.session_state.get("audit_in_progress", False)
+        and registry.active() is None
         and can_run_audit
     )
-    if should_run_audit:
-        logger.info("Audit starting: provider=%s, model=%s", llm_provider, model_name)
-        # Mark in-progress immediately so the button renders as "Stop audit"
-        st.session_state["audit_in_progress"] = True
+    if (
+        not should_run_audit
+        and st.session_state.get("audit_run_requested", False)
+        and not can_run_audit
+    ):
         st.session_state["audit_run_requested"] = False
-        st.session_state["summary_generation_pending"] = False
-        # Reset checkpoint tracking so a fresh run doesn't show a stale
-        # "saved through topic X" line from a previous run.
-        st.session_state["last_checkpoint_topic"] = None
-        st.session_state["audit_current_topic"] = None
-    elif st.session_state.get("audit_run_requested", False) and not can_run_audit:
-        st.session_state["audit_run_requested"] = False
-
-    if st.session_state.get("audit_in_progress", False) and not should_run_audit:
-        logger.warning("Stuck state recovery triggered: audit_in_progress=True but no audit running")
-        # The audit was marked in-progress by a previous Streamlit run that was
-        # interrupted (e.g. user clicked Stop while an LLM call was blocking).
-        # The finally block from that run may never have executed, leaving us in
-        # a stuck state.  Recover by promoting any partial results and resetting.
-        partial_bytes = st.session_state.get("partial_audit_bytes")
-        if partial_bytes:
-            st.session_state["audit_output_bytes"] = partial_bytes
-            st.session_state["audit_is_partial"] = True
-            if uploaded_audit:
-                fname = _build_completed_filename(uploaded_audit)
-                if "_completed" in fname:
-                    fname = fname.replace("_completed", "_checkpoint")
-                elif "_checkpoint" not in fname:
-                    base, ext = os.path.splitext(fname)
-                    fname = f"{base}_checkpoint{ext}"
-                st.session_state["audit_output_filename"] = fname
-            else:
-                st.session_state["audit_output_filename"] = "audit_checkpoint.xlsx"
-        st.session_state["audit_in_progress"] = False
-        st.session_state["audit_stop_requested"] = False
-        st.rerun()
 
     # Opt-in email delivery — survives Streamlit Cloud winding the app down
     # before the user can download.  Rendered every pass so the widget values
@@ -1108,65 +1039,22 @@ def main():
                 "SMTP settings to the app secrets."
             )
 
-    if st.session_state.get("audit_in_progress", False):
-        st.button(
-            "Stop audit",
-            type="secondary",
-            on_click=_request_audit_stop,
-        )
-        # Always surface partial results for download while audit is running
-        partial_bytes = st.session_state.get("partial_audit_bytes")
-        if partial_bytes and uploaded_audit:
-            partial_filename = _build_completed_filename(uploaded_audit).replace(
-                "_completed", "_checkpoint"
-            )
-            st.download_button(
-                label="Download audit checkpoint (.xlsx)",
-                data=partial_bytes,
-                file_name=partial_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="stop_area_partial_download",
-            )
-            last_cp_topic = st.session_state.get("last_checkpoint_topic")
-            if last_cp_topic:
-                st.caption(f"File contains progress through topic {last_cp_topic}")
-    elif st.session_state.get("warnings_confirmation_needed", False):
-        st.warning("Please review the warnings above before proceeding.")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.button(
-                "Continue anyway",
-                type="primary",
-                on_click=_acknowledge_warnings,
-            )
-        with col2:
-            st.button(
-                "Cancel",
-                type="secondary",
-                on_click=_cancel_warnings,
-            )
-    else:
-        st.button(
-            "Run audit",
-            type="primary",
-            disabled=not can_run_audit,
-            help=run_help,
-            on_click=_queue_audit_run_with_warning_check,
-        )
-
-    if should_run_audit:
+    # ------------------------------------------------------------------
+    # Launch / poll the background audit job
+    # ------------------------------------------------------------------
+    def _launch_audit_job():
+        """Build params on the main thread and hand the run to the worker."""
         partial_detection = st.session_state.get("partial_audit_detection", {})
         is_partial_audit = partial_detection.get("is_partial", False)
 
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
-
         if not audit_bytes:
             if uploaded_audit is None:
                 st.error("Please upload an audit file before running the audit.")
-                st.session_state["audit_in_progress"] = False
+                st.session_state["audit_run_requested"] = False
                 return
-            # For partial audits, skip reformatting - the file is already in our format
             if is_partial_audit:
+                # Checkpoints are already in our format — skip reformatting.
                 audit_bytes = uploaded_audit.getvalue()
                 st.session_state["reformatted_audit_bytes"] = audit_bytes
             else:
@@ -1182,337 +1070,238 @@ def main():
         else:
             topics_to_audit = st.session_state.get("topics_to_audit")
 
+        if use_manual_api_key:
+            final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
+            final_openai_key = openai_api_key if llm_provider == "openai" else None
+        else:
+            final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
+            final_openai_key = api_key if llm_provider == "openai" and api_key else None
+
+        existing_audit_bytes = None
+        completed_categories = None
+        if is_partial_audit:
+            existing_audit_bytes = uploaded_audit.getvalue()
+            completed_categories = partial_detection.get("completed_categories", set())
+
+        summary_prompt_val = st.session_state.get("summary_prompt", summary_prompt_default)
+        accuracy_threshold_val = st.session_state.get("accuracy_threshold", 0.80)
+
+        audit_kwargs = dict(
+            audit_excel_bytes=audit_bytes,
+            prompt_template=audit_prompt,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            model_info=model_info,
+            organization=organization,
+            audience=audience,
+            max_categories=int(max_categories),
+            max_sentences_per_category=int(max_sentences),
+            model_tree_bytes=model_tree.getvalue() if model_tree else None,
+            topics_to_audit=topics_to_audit,
+            anthropic_api_key=final_anthropic_key,
+            openai_api_key=final_openai_key,
+            max_tokens=int(max_tokens),
+            existing_audit_bytes=existing_audit_bytes,
+            completed_categories=completed_categories,
+            audit_file_name=uploaded_audit.name,
+            model_tree_name=model_tree.name if model_tree else None,
+            include_summary=True,
+            summary_prompt=summary_prompt_val,
+            accuracy_threshold=accuracy_threshold_val,
+            run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            audit_warnings=audit_warnings,
+            include_model_description=include_model_description,
+        )
+        summary_kwargs = dict(
+            msg_template=summary_prompt_val,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            max_tokens=int(max_tokens),
+            accuracy_threshold=accuracy_threshold_val,
+            model_info=model_info,
+            anthropic_api_key=final_anthropic_key,
+            openai_api_key=final_openai_key,
+        )
+        params = audit_worker.JobParams(
+            audit_kwargs=audit_kwargs,
+            summary_kwargs=summary_kwargs,
+            completed_filename=_build_completed_filename(uploaded_audit),
+            checkpoint_filename=_checkpoint_filename(uploaded_audit),
+            include_summary=True,
+            email=audit_worker.EmailPayload(
+                enabled=bool(st.session_state.get("email_results_enabled")),
+                recipient=(st.session_state.get("email_results_address") or "").strip(),
+                smtp=_smtp_config(),
+            ),
+        )
         try:
-            with st.spinner("Running audit..."):
-                progress_container = st.container()
-                progress_text = progress_container.empty()
-                progress_bar = progress_container.progress(0)
-                status_text = progress_container.empty()
-                checkpoint_text = progress_container.empty()
-                download_container = progress_container.empty()
+            job = registry.start(params)
+        except audit_worker.AlreadyRunning:
+            job = registry.active()
+        if job is not None:
+            st.session_state["active_run_id"] = job.run_id
+            logger.info("Audit job launched: provider=%s, model=%s", llm_provider, model_name)
+        st.session_state["audit_run_requested"] = False
+        st.session_state.pop("finalized_run_id", None)
+        st.rerun()
 
-                def _next_checkpoint_topic(current, total):
-                    """The topic number the next checkpoint will land on.
+    @st.fragment(run_every="2s")
+    def _audit_progress_panel():
+        """Poll the active job every 2s and redraw progress (non-blocking)."""
+        job = registry.get(st.session_state.get("active_run_id"))
+        if job is None:
+            return
+        snap = job.snapshot()
+        if snap.status in (
+            audit_worker.JobStatus.DONE,
+            audit_worker.JobStatus.STOPPED,
+            audit_worker.JobStatus.ERROR,
+        ):
+            # Leave poll mode; the next full run finalizes + renders the output.
+            st.rerun(scope="app")
+            return
 
-                    Checkpoints fire on multiples of CHECKPOINT_INTERVAL and
-                    always on the final topic, so the next one is the smallest
-                    multiple >= current, capped at the total.
-                    """
-                    if not total:
-                        return current
-                    rounded_up = (
-                        (current + CHECKPOINT_INTERVAL - 1) // CHECKPOINT_INTERVAL
-                    ) * CHECKPOINT_INTERVAL
-                    return min(rounded_up, total)
+        current, total = snap.progress_current, snap.progress_total
+        if snap.status == audit_worker.JobStatus.RUNNING_SUMMARY:
+            st.write(f"Summarizing category {current} of {total}: {snap.progress_category}")
+        elif snap.status == audit_worker.JobStatus.RUNNING_AUDIT:
+            st.write(f"Auditing category {current} of {total}: {snap.progress_category}")
+        else:
+            st.write("Starting audit…")
+        st.progress(current / total if total else 0.0)
 
-                def _update_progress(current, total, category_name):
-                    progress_text.write(
-                        f"Auditing category {current} of {total}: {category_name}"
-                    )
-                    progress_bar.progress(current / total if total else 0)
-                    st.session_state["audit_current_topic"] = current
-                    last = st.session_state.get("last_checkpoint_topic")
-                    next_cp = _next_checkpoint_topic(current, total)
-                    if last:
-                        checkpoint_text.caption(
-                            f"✓ Checkpoint saved through topic {last}; "
-                            f"next at topic {next_cp}"
-                        )
-                    else:
-                        checkpoint_text.caption(
-                            f"Progress is saved as a checkpoint every "
-                            f"{CHECKPOINT_INTERVAL} topics. First checkpoint "
-                            f"after topic {next_cp}."
-                        )
+        if snap.status_message:
+            st.info(snap.status_message)
 
-                def _update_status(message):
-                    if message:
-                        status_text.info(message)
-                    else:
-                        status_text.empty()
-
-                @st.fragment
-                def _render_download_button(partial_bytes, partial_filename, button_key, caption_text):
-                    st.download_button(
-                        label="Download audit checkpoint (.xlsx)",
-                        data=partial_bytes,
-                        file_name=partial_filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=button_key,
-                    )
-                    if caption_text:
-                        st.caption(caption_text)
-
-                def _save_progress(partial_bytes):
-                    st.session_state["partial_audit_bytes"] = partial_bytes
-                    # Record which topic this checkpoint covers so the UI can
-                    # tell the user the download lags the live progress.
-                    last = st.session_state.get("audit_current_topic")
-                    st.session_state["last_checkpoint_topic"] = last
-                    # Update the download button with the latest partial results
-                    partial_filename = _build_completed_filename(uploaded_audit).replace("_completed", "_checkpoint")
-                    caption_text = (
-                        f"File contains progress through topic {last}" if last else ""
-                    )
-                    with download_container:
-                        partial_download_counter = st.session_state.get("partial_download_counter", 0) + 1
-                        st.session_state["partial_download_counter"] = partial_download_counter
-                        _render_download_button(
-                            partial_bytes,
-                            partial_filename,
-                            f"download_checkpoint_{partial_download_counter}",
-                            caption_text,
-                        )
-
-                def _check_stop():
-                    return st.session_state.get("audit_stop_requested", False)
-
-                if use_manual_api_key:
-                    final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
-                    final_openai_key = openai_api_key if llm_provider == "openai" else None
-                else:
-                    final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
-                    final_openai_key = api_key if llm_provider == "openai" and api_key else None
-
-                # Check for partial audit resume
-                partial_detection = st.session_state.get("partial_audit_detection", {})
-                existing_audit_bytes = None
-                completed_categories = None
-                if partial_detection.get("is_partial"):
-                    existing_audit_bytes = uploaded_audit.getvalue()
-                    # Completed categories are those fully judged; incomplete ones will be re-audited
-                    completed_categories = partial_detection.get("completed_categories", set())
-
-                output_bytes = run_audit(
-                    audit_excel_bytes=audit_bytes,
-                    prompt_template=audit_prompt,
-                    llm_provider=llm_provider,
-                    model_name=model_name,
-                    model_info=model_info,
-                    organization=organization,
-                    audience=audience,
-                    max_categories=int(max_categories),
-                    max_sentences_per_category=int(max_sentences),
-                    model_tree_bytes=model_tree.getvalue() if model_tree else None,
-                    topics_to_audit=topics_to_audit,
-                    anthropic_api_key=final_anthropic_key,
-                    openai_api_key=final_openai_key,
-                    max_tokens=int(max_tokens),
-                    log_fn=st.write,
-                    warn_fn=st.warning,
-                    progress_fn=_update_progress,
-                    save_progress_fn=_save_progress,
-                    check_stop_fn=_check_stop,
-                    existing_audit_bytes=existing_audit_bytes,
-                    completed_categories=completed_categories,
-                    audit_file_name=uploaded_audit.name,
-                    model_tree_name=model_tree.name if model_tree else None,
-                    include_summary=True,
-                    summary_prompt=st.session_state.get("summary_prompt", summary_prompt_default),
-                    accuracy_threshold=st.session_state.get("accuracy_threshold", 0.80),
-                    run_datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    audit_warnings=audit_warnings,
-                    status_fn=_update_status,
-                    include_model_description=include_model_description,
+        # Checkpoint cadence line (audit phase only — summary has no checkpoints).
+        if snap.status == audit_worker.JobStatus.RUNNING_AUDIT:
+            next_cp = _next_checkpoint_topic(current, total)
+            if snap.checkpoint_topic:
+                st.caption(
+                    f"✓ Checkpoint saved through topic {snap.checkpoint_topic}; "
+                    f"next at topic {next_cp}"
                 )
-                progress_bar.progress(1.0)
-                progress_text.empty()
-                progress_bar.empty()
-                status_text.empty()
-                checkpoint_text.empty()
-                download_container.empty()
-            st.session_state["audit_output_bytes"] = output_bytes
-            st.session_state["partial_audit_bytes"] = None
-            st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
-            st.session_state["audit_is_partial"] = False
-            st.session_state["summary_generation_pending"] = True
-            logger.info("Audit completed successfully")
-            st.success("Audit complete.")
-            _maybe_email_results("completed")
-        except AuditStopRequested:
-            logger.warning("Audit stopped by user request")
+            else:
+                st.caption(
+                    f"Progress is saved as a checkpoint every {CHECKPOINT_INTERVAL} "
+                    f"topics. First checkpoint after topic {next_cp}."
+                )
+
+        # Live checkpoint download — stable key, only the data changes each tick.
+        if snap.checkpoint_bytes and uploaded_audit:
+            st.download_button(
+                label="Download audit checkpoint (.xlsx)",
+                data=snap.checkpoint_bytes,
+                file_name=_checkpoint_filename(uploaded_audit),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="live_checkpoint_download",
+            )
+            if snap.checkpoint_topic:
+                st.caption(f"File contains progress through topic {snap.checkpoint_topic}")
+
+        stop_label = (
+            "Stop summary and keep audit"
+            if snap.status == audit_worker.JobStatus.RUNNING_SUMMARY
+            else "Stop audit"
+        )
+        st.button(
+            stop_label,
+            type="secondary",
+            key="stop_audit_btn",
+            on_click=job.stop_event.set,
+        )
+
+    def _finalize_job_into_session(job):
+        """Promote a terminal job's output into session_state + show the outcome."""
+        snap = job.snapshot()
+        if st.session_state.get("finalized_run_id") != job.run_id:
+            st.session_state["audit_output_bytes"] = snap.output_bytes
+            st.session_state["audit_output_filename"] = snap.output_filename
+            st.session_state["audit_is_partial"] = snap.is_partial
+            st.session_state["finalized_run_id"] = job.run_id
+        st.session_state.pop("active_run_id", None)
+
+        if snap.status == audit_worker.JobStatus.DONE:
+            if snap.is_partial:
+                st.warning("Summary generation was stopped; audit results are available below.")
+            else:
+                st.success("Audit complete.")
+        elif snap.status == audit_worker.JobStatus.STOPPED:
             st.warning("Audit stopped by user request.")
-            partial_bytes = st.session_state.get("partial_audit_bytes")
-            if partial_bytes:
-                st.session_state["audit_output_bytes"] = partial_bytes
-                st.session_state["audit_output_filename"] = _build_completed_filename(uploaded_audit)
-                st.session_state["audit_is_partial"] = True
-                st.info("Partial audit results are available for download.")
-                _maybe_email_results("stopped before finishing — partial results")
-        except Exception as exc:
-            logger.error("Audit failed: %s: %s", type(exc).__name__, exc, exc_info=True)
-            lead, suggestions = _format_audit_failure_message(exc)
+            if snap.output_bytes:
+                st.info(
+                    "Partial audit results are available below. Re-upload the "
+                    "checkpoint file to resume the audit where it left off."
+                )
+        elif snap.status == audit_worker.JobStatus.ERROR:
+            raw = f"{snap.error_type}: {snap.error_message}"
+            lead, suggestions = _format_audit_failure_message(raw, snap.error_retryable)
             bullets = "\n".join(f"- {s}" for s in suggestions)
             st.error(f"{lead}\n\n**What to try:**\n{bullets}")
-            partial_bytes = st.session_state.get("partial_audit_bytes")
-            if partial_bytes:
-                st.session_state["audit_output_bytes"] = partial_bytes
-                failed_filename = _build_completed_filename(uploaded_audit)
-                if "_completed" in failed_filename:
-                    failed_filename = failed_filename.replace("_completed", "_checkpoint")
-                elif "_checkpoint" not in failed_filename:
-                    base, ext = os.path.splitext(failed_filename)
-                    failed_filename = f"{base}_checkpoint{ext}"
-                st.session_state["audit_output_filename"] = failed_filename
-                st.session_state["audit_is_partial"] = True
+            if snap.output_bytes:
                 st.info(
                     "A checkpoint of the audit's progress so far is available "
-                    "below. Re-upload it to resume from where it stopped — "
-                    "you can change provider, model, or per-call limits before "
-                    "you do."
+                    "below. Re-upload it to resume from where it stopped — you "
+                    "can change provider, model, or per-call limits before you do."
                 )
-                _maybe_email_results("stopped on an error — partial checkpoint")
-        finally:
-            st.session_state["audit_in_progress"] = False
-            st.session_state["audit_stop_requested"] = False
-            # If the audit was interrupted (e.g. by Streamlit rerun from file
-            # watcher) without the except blocks setting audit_output_bytes,
-            # promote whatever partial results we have so the download button
-            # still appears after the rerun.
-            if (
-                not st.session_state.get("audit_output_bytes")
-                and st.session_state.get("partial_audit_bytes")
-            ):
-                st.session_state["audit_output_bytes"] = st.session_state["partial_audit_bytes"]
-                st.session_state["audit_is_partial"] = True
-                partial_fname = _build_completed_filename(uploaded_audit)
-                if "_completed" in partial_fname:
-                    partial_fname = partial_fname.replace("_completed", "_checkpoint")
-                elif "_checkpoint" not in partial_fname:
-                    base, ext = os.path.splitext(partial_fname)
-                    partial_fname = f"{base}_checkpoint{ext}"
-                st.session_state["audit_output_filename"] = partial_fname
 
-    audit_output_bytes = st.session_state.get("audit_output_bytes")
-    summary_prompt = st.session_state.get("summary_prompt", summary_prompt_default)
+        # Surface the worker's best-effort email outcome.
+        email_status = snap.email_status or ""
+        if email_status.startswith("sent:"):
+            st.success(f"Results emailed to {email_status.split(':', 1)[1]}.")
+        elif email_status.startswith("failed:"):
+            st.warning(
+                "The run finished but emailing the results failed: "
+                f"{email_status.split(':', 1)[1]}. You can still download the file below."
+            )
+        elif email_status.startswith("skipped:"):
+            reason = email_status.split(":", 1)[1]
+            if reason.startswith("invalid") or reason.startswith("SMTP"):
+                st.warning(f"Results not emailed: {reason}.")
 
-    summary_missing_reasons = []
-    if not audit_output_bytes:
-        summary_missing_reasons.append("Run the audit first")
-    if llm_provider == "anthropic":
-        if use_manual_api_key:
-            if not manual_key_valid:
-                summary_missing_reasons.append("Provide a valid Anthropic API key")
+        for warning_msg in snap.warnings:
+            st.warning(warning_msg)
+
+    if should_run_audit:
+        _launch_audit_job()
+
+    job = registry.get(st.session_state.get("active_run_id"))
+    if job is not None and not job.is_terminal():
+        # A run is in flight — show the live progress panel (it owns the Stop
+        # button + live checkpoint download). Reruns/reconnects re-attach here.
+        _audit_progress_panel()
+    else:
+        if job is not None:
+            _finalize_job_into_session(job)
+        if st.session_state.get("warnings_confirmation_needed", False):
+            st.warning("Please review the warnings above before proceeding.")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.button(
+                    "Continue anyway",
+                    type="primary",
+                    on_click=_acknowledge_warnings,
+                )
+            with col2:
+                st.button(
+                    "Cancel",
+                    type="secondary",
+                    on_click=_cancel_warnings,
+                )
         else:
-            if not api_key:
-                summary_missing_reasons.append("Provide an Anthropic API key")
-    elif llm_provider == "openai":
-        if use_manual_api_key:
-            if not manual_key_valid:
-                summary_missing_reasons.append("Provide a valid OpenAI API key")
-        else:
-            if not api_key:
-                summary_missing_reasons.append("Provide an OpenAI API key")
+            st.button(
+                "Run audit",
+                type="primary",
+                disabled=not can_run_audit,
+                help=run_help,
+                on_click=_queue_audit_run_with_warning_check,
+            )
 
-    can_run_summary = not summary_missing_reasons
-    summary_help = (
-        None
-        if can_run_summary
-        else "; ".join(summary_missing_reasons)
-    )
-
-    if st.session_state.get("summary_generation_pending") and can_run_summary:
-        logger.info("Summary generation starting")
-        progress_text = None
-        progress_bar = None
-        stop_button_container = None
-
-        # Store the audit bytes before summary in case user stops
-        audit_bytes_before_summary = st.session_state.get("audit_output_bytes")
-
-        def _request_summary_stop():
-            st.session_state["summary_stop_requested"] = True
-
-        try:
-            with st.spinner("Summarizing audit..."):
-                summarizer_module = _load_summarizer_module()
-                SummaryStopRequested = summarizer_module.SummaryStopRequested
-                if use_manual_api_key:
-                    final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
-                    final_openai_key = openai_api_key if llm_provider == "openai" else None
-                else:
-                    final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
-                    final_openai_key = api_key if llm_provider == "openai" and api_key else None
-                progress_container = st.container()
-                progress_text = progress_container.empty()
-                progress_bar = progress_container.progress(0)
-                summary_status_text = progress_container.empty()
-                stop_button_container = progress_container.empty()
-                stop_button_container.button(
-                    "Stop summary and download audit",
-                    on_click=_request_summary_stop,
-                    key="stop_summary_button",
-                )
-
-                def _update_summary_progress(current, total, category_name):
-                    progress_text.write(
-                        f"Summarizing category {current} of {total}: {category_name}"
-                    )
-                    progress_bar.progress(current / total if total else 0)
-
-                def _update_summary_status(message):
-                    if message:
-                        summary_status_text.info(message)
-                    else:
-                        summary_status_text.empty()
-
-                def _check_summary_stop():
-                    return st.session_state.get("summary_stop_requested", False)
-
-                accuracy_threshold = st.session_state.get("accuracy_threshold", 0.80)
-                summary_bytes = summarizer_module.summarize_audit_report(
-                    audit_excel_input=audit_output_bytes,
-                    msg_template=summary_prompt,
-                    llm_provider=llm_provider,
-                    model_name=model_name,
-                    max_tokens=int(max_tokens),
-                    accuracy_threshold=accuracy_threshold,
-                    model_info=model_info,
-                    anthropic_api_key=final_anthropic_key,
-                    openai_api_key=final_openai_key,
-                    log_fn=st.write,
-                    warn_fn=st.warning,
-                    progress_fn=_update_summary_progress,
-                    check_stop_fn=_check_summary_stop,
-                    status_fn=_update_summary_status,
-                )
-                progress_bar.progress(1.0)
-            st.session_state["audit_output_bytes"] = summary_bytes
-            st.session_state["summary_stop_requested"] = False
-            logger.info("Summary generation completed successfully")
-            st.success("Audit summary complete.")
-        except summarizer_module.SummaryStopRequested:
-            logger.warning("Summary generation stopped by user request")
-            st.warning("Summary generation stopped by user request.")
-            # Restore the audit bytes without summary so user can download
-            if audit_bytes_before_summary:
-                st.session_state["audit_output_bytes"] = audit_bytes_before_summary
-                st.info("Audit results (without summary) are available for download.")
-            st.session_state["summary_stop_requested"] = False
-        except Exception as exc:
-            logger.error("Summary generation failed: %s: %s", type(exc).__name__, exc, exc_info=True)
-            st.error(f"Audit summary failed: {exc}")
-            # Audit output is still available from before summary started
-            if audit_bytes_before_summary:
-                st.info("Audit results (without summary) are available for download.")
-        finally:
-            st.session_state["summary_generation_pending"] = False
-            if progress_text is not None:
-                progress_text.empty()
-            if progress_bar is not None:
-                progress_bar.empty()
-            if summary_status_text is not None:
-                summary_status_text.empty()
-            if stop_button_container is not None:
-                stop_button_container.empty()
-    elif st.session_state.get("summary_generation_pending") and summary_help:
-        st.warning(f"Audit summary pending: {summary_help}")
-
+    # Final download — shown once a job has finished and been finalized.
     audit_output_bytes = st.session_state.get("audit_output_bytes")
-    summary_pending = st.session_state.get("summary_generation_pending")
-    if audit_output_bytes and not summary_pending:
+    if audit_output_bytes and registry.active() is None:
         is_partial = st.session_state.get("audit_is_partial", False)
-        if is_partial and not st.session_state.get("audit_in_progress", False):
+        if is_partial:
             st.warning(
                 "The audit was interrupted before it finished. "
                 "Partial results are available for download below. "

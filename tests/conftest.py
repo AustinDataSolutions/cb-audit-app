@@ -38,6 +38,22 @@ def validation_module():
     return _load_module("audit_validation.py", "audit_validation")
 
 
+@pytest.fixture
+def worker_module():
+    # audit_worker uses `from __future__ import annotations` + dataclasses, which
+    # makes dataclass processing look the module up in sys.modules to resolve
+    # string annotations — so it must be registered there before exec (a plain
+    # import does this; the bare _load_module helper does not).
+    import sys
+
+    module_path = os.path.join(os.path.dirname(__file__), "..", "audit_worker.py")
+    spec = importlib.util.spec_from_file_location("audit_worker", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["audit_worker"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 # ---------------------------------------------------------------------------
 # Workbook builders
 # ---------------------------------------------------------------------------
