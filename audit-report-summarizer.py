@@ -28,6 +28,10 @@ DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
 _LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
+# Extra time past the httpx timeout before the watchdog force-abandons a call.
+# Lets httpx time out and tear down cleanly on its own first; the watchdog only
+# fires when httpx fails to (e.g. a stalled streaming response that never gaps).
+_LLM_WATCHDOG_GRACE = 30  # seconds
 
 
 def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
@@ -44,11 +48,27 @@ def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
 
+    # Hard ceiling on how long we'll wait for the worker thread, acting as a
+    # watchdog/backstop. httpx's own timeout is *supposed* to bound the call,
+    # but for a streaming response its read timeout only fires on a gap between
+    # chunks, not on total elapsed time \u2014 so a server that trickles bytes can
+    # keep the call alive indefinitely and hang the run. We give httpx a grace
+    # margin to time out cleanly on its own, then force the issue. The orphaned
+    # daemon thread is abandoned (it can't be killed) but the run moves on.
+    deadline = timeout_seconds + _LLM_WATCHDOG_GRACE
+
     elapsed = 0
     poll_interval = 1
     while thread.is_alive():
         thread.join(timeout=poll_interval)
         elapsed += poll_interval
+        if elapsed >= deadline:
+            if status_fn:
+                status_fn("")
+            raise httpx.TimeoutException(
+                f"LLM call exceeded {deadline}s watchdog deadline "
+                f"(no response or stalled stream)"
+            )
         if (
             status_fn
             and elapsed >= _LLM_STATUS_DELAY

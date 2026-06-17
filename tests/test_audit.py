@@ -245,6 +245,53 @@ class TestCallLlmWithStatus:
         result = audit._call_llm_with_status(lambda: 42, 300, None)
         assert result == 42
 
+    def test_watchdog_aborts_stuck_call(self):
+        """A call that never returns is force-abandoned at the watchdog deadline.
+
+        Guards against the stalled-stream hang: httpx's read timeout only fires
+        on a gap between chunks, so a trickling stream could otherwise keep the
+        worker alive forever. The watchdog raises a retryable TimeoutException.
+        """
+        original_grace = audit._LLM_WATCHDOG_GRACE
+        audit._LLM_WATCHDOG_GRACE = 0  # deadline == timeout_seconds
+
+        done = threading.Event()
+
+        def stuck_fn():
+            # Sleeps well past the deadline; abandoned as a daemon thread.
+            done.wait(timeout=30)
+            return "never used"
+
+        try:
+            start = time.monotonic()
+            with pytest.raises(httpx.TimeoutException, match="watchdog deadline"):
+                audit._call_llm_with_status(stuck_fn, 1, None)
+            elapsed = time.monotonic() - start
+            # Should bail at ~1s (timeout_seconds), not wait out the 30s sleep.
+            assert elapsed < 5
+        finally:
+            audit._LLM_WATCHDOG_GRACE = original_grace
+            done.set()  # release the abandoned worker thread
+
+    def test_watchdog_clears_status_on_abort(self):
+        """The watchdog clears the status line before raising."""
+        original_grace = audit._LLM_WATCHDOG_GRACE
+        audit._LLM_WATCHDOG_GRACE = 0
+
+        status_calls = []
+        done = threading.Event()
+
+        try:
+            with pytest.raises(httpx.TimeoutException):
+                audit._call_llm_with_status(
+                    lambda: done.wait(timeout=30), 1,
+                    lambda msg: status_calls.append(msg),
+                )
+            assert status_calls[-1] == ""
+        finally:
+            audit._LLM_WATCHDOG_GRACE = original_grace
+            done.set()
+
 
 # ===========================================================================
 # detect_partial_audit

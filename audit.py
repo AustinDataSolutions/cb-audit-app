@@ -668,6 +668,10 @@ def _load_existing_audit_data(audit_bytes):
 
 
 _LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
+# Extra time past the httpx timeout before the watchdog force-abandons a call.
+# Lets httpx time out and tear down cleanly on its own first; the watchdog only
+# fires when httpx fails to (e.g. a stalled streaming response that never gaps).
+_LLM_WATCHDOG_GRACE = 30  # seconds
 
 
 def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
@@ -689,11 +693,32 @@ def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
     thread.start()
     logger.debug("LLM call started (timeout: %ds)", timeout_seconds)
 
+    # Hard ceiling on how long we'll wait for the worker thread, acting as a
+    # watchdog/backstop. httpx's own timeout is *supposed* to bound the call,
+    # but for a streaming response its read timeout only fires on a gap between
+    # chunks, not on total elapsed time \u2014 so a server that trickles bytes (or
+    # an idle-but-not-dead connection) can keep the call alive indefinitely and
+    # hang the whole audit. We give httpx a grace margin to time out cleanly on
+    # its own, then force the issue. The orphaned daemon thread is abandoned
+    # (it can't be killed) but the audit moves on and retries.
+    deadline = timeout_seconds + _LLM_WATCHDOG_GRACE
+
     elapsed = 0
     poll_interval = 1  # second
     while thread.is_alive():
         thread.join(timeout=poll_interval)
         elapsed += poll_interval
+        if elapsed >= deadline:
+            logger.error(
+                "LLM call exceeded watchdog deadline (%ds); abandoning thread",
+                deadline,
+            )
+            if status_fn:
+                status_fn("")  # clear status
+            raise httpx.TimeoutException(
+                f"LLM call exceeded {deadline}s watchdog deadline "
+                f"(no response or stalled stream)"
+            )
         if (
             status_fn
             and elapsed >= _LLM_STATUS_DELAY
