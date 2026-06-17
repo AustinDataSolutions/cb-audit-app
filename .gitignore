@@ -191,3 +191,5 @@ __pycache__/
 *.pyo
 
 reference/
+# Claude Code local settings (personal, per-machine)
+.claude/settings.local.json
