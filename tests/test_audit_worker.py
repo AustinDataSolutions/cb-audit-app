@@ -130,6 +130,57 @@ def test_summary_stop_keeps_audit_output(worker_module):
     assert snap.is_partial is False
 
 
+def test_summary_failure_keeps_audit_and_marks_done(worker_module):
+    """A summary failure must NOT fail the run — the completed audit is kept."""
+    w = worker_module
+    reg = w.JobRegistry()
+
+    def fake_run(**kw):
+        return b"AUDIT"
+
+    def fake_sum(**kw):
+        raise RuntimeError("summary boom")
+
+    job = reg.start(_make_params(w, include_summary=True), run_fn=fake_run, summarize_fn=fake_sum)
+    _join(job)
+    snap = job.snapshot()
+    assert snap.status == w.JobStatus.DONE
+    assert snap.output_bytes == b"AUDIT"  # audit preserved, not promoted to ERROR
+    assert snap.summary_error and "summary boom" in snap.summary_error
+
+
+def test_summary_only_skips_audit(worker_module):
+    """Summary-only run feeds the uploaded workbook straight to the summarizer."""
+    w = worker_module
+    reg = w.JobRegistry()
+    audit_called = []
+
+    def fake_run(**kw):
+        audit_called.append(True)
+        return b"SHOULD_NOT_RUN"
+
+    def fake_sum(*, audit_excel_input, **kw):
+        assert audit_excel_input == b"UPLOADED_AUDIT"
+        return b"SUMMARY"
+
+    params = w.JobParams(
+        audit_kwargs={},
+        summary_kwargs={},
+        completed_filename="c.xlsx",
+        checkpoint_filename="ck.xlsx",
+        include_summary=True,
+        email=w.EmailPayload(enabled=False, recipient="", smtp={}),
+        summary_only=True,
+        summary_only_input=b"UPLOADED_AUDIT",
+    )
+    job = reg.start(params, run_fn=fake_run, summarize_fn=fake_sum)
+    _join(job)
+    snap = job.snapshot()
+    assert snap.status == w.JobStatus.DONE
+    assert snap.output_bytes == b"SUMMARY"
+    assert audit_called == []  # audit phase skipped entirely
+
+
 def test_stop_promotes_checkpoint(worker_module):
     w = worker_module
     reg = w.JobRegistry()

@@ -109,6 +109,10 @@ class JobParams:
     checkpoint_filename: str
     include_summary: bool
     email: EmailPayload
+    # Summary-only run (re-uploaded completed audit): skip the audit phase and
+    # summarize summary_only_input directly.
+    summary_only: bool = False
+    summary_only_input: Optional[bytes] = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,7 @@ class JobSnapshot:
     error_type: Optional[str]
     error_message: Optional[str]
     error_retryable: bool
+    summary_error: Optional[str]
     warnings: tuple
     email_status: Optional[str]
 
@@ -166,6 +171,7 @@ class AuditJob:
         self.error_type: Optional[str] = None
         self.error_message: Optional[str] = None
         self.error_retryable: bool = False
+        self.summary_error: Optional[str] = None
         self.warnings: list = []
         self.log_lines: list = []
         self.email_status: Optional[str] = None
@@ -234,6 +240,16 @@ class AuditJob:
                 self.is_partial = True
             self.status = JobStatus.ERROR
 
+    def set_summary_error(self, exc: BaseException):
+        """Record a failed summary phase without failing the whole run.
+
+        The audit already succeeded and is stored as the output; the summary is
+        a best-effort add-on, so a summary failure leaves the completed audit
+        intact and the run terminates DONE (with this note surfaced by the UI).
+        """
+        with self._lock:
+            self.summary_error = f"{type(exc).__name__}: {exc}"
+
     def set_email_status(self, status: str):
         with self._lock:
             self.email_status = status
@@ -256,6 +272,7 @@ class AuditJob:
                 error_type=self.error_type,
                 error_message=self.error_message,
                 error_retryable=self.error_retryable,
+                summary_error=self.summary_error,
                 warnings=tuple(self.warnings),
                 email_status=self.email_status,
             )
@@ -349,19 +366,25 @@ def _run_pipeline(
     params = job.params
     callbacks = make_callbacks(job)
     try:
-        job.set_status(JobStatus.RUNNING_AUDIT)
-        audit_bytes = run_fn(**params.audit_kwargs, **callbacks)
-        # Tentative final output is the audit workbook; replaced if summary runs.
-        job.set_output(audit_bytes, params.completed_filename, is_partial=False)
+        if params.summary_only:
+            # Summary-only run (re-uploaded completed audit): skip the audit
+            # phase; the uploaded workbook IS the audit and feeds the summary.
+            audit_bytes = params.summary_only_input
+            job.set_output(audit_bytes, params.completed_filename, is_partial=False)
+        else:
+            job.set_status(JobStatus.RUNNING_AUDIT)
+            audit_bytes = run_fn(**params.audit_kwargs, **callbacks)
+            # Tentative final output is the audit workbook; replaced if summary runs.
+            job.set_output(audit_bytes, params.completed_filename, is_partial=False)
 
         if params.include_summary:
             job.set_status(JobStatus.RUNNING_SUMMARY)
+            # summarize_audit_report has no save_progress_fn (only run_audit
+            # checkpoints), so pass the callback subset it actually accepts.
+            summary_callbacks = {
+                k: v for k, v in callbacks.items() if k != "save_progress_fn"
+            }
             try:
-                # summarize_audit_report has no save_progress_fn (only run_audit
-                # checkpoints), so pass the callback subset it actually accepts.
-                summary_callbacks = {
-                    k: v for k, v in callbacks.items() if k != "save_progress_fn"
-                }
                 summary_bytes = summarize_fn(
                     audit_excel_input=audit_bytes,
                     **params.summary_kwargs,
@@ -371,9 +394,22 @@ def _run_pipeline(
             except _summary_stop_exception():
                 # User stopped the summary: keep the audit-only result.
                 logger.warning("Summary stopped by user; keeping audit-only output")
+            except Exception as summary_exc:
+                # Summary is a best-effort add-on; the audit already succeeded
+                # and is preserved as the output. Record the failure and finish
+                # DONE rather than failing the whole run.
+                logger.error(
+                    "Summary failed (run %s): %s: %s",
+                    job.run_id, type(summary_exc).__name__, summary_exc, exc_info=True,
+                )
+                job.set_summary_error(summary_exc)
 
         job.set_done()
-        _send_email(job, "completed")
+        _send_email(
+            job,
+            "completed" if job.snapshot().summary_error is None
+            else "completed — summary could not be generated",
+        )
     except AuditStopRequested:
         logger.warning("Audit stopped by user request (run %s)", job.run_id)
         job.set_stopped()

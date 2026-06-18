@@ -1319,7 +1319,14 @@ def main():
         st.session_state.pop("active_run_id", None)
 
         if snap.status == audit_worker.JobStatus.DONE:
-            if snap.is_partial:
+            if snap.summary_error:
+                st.warning(
+                    "The audit finished, but the summary couldn't be generated "
+                    f"({snap.summary_error}). The audit (without the summary "
+                    "section) is available below — re-upload the completed file "
+                    "to generate the summary again."
+                )
+            elif snap.is_partial:
                 st.warning("Summary generation was stopped; audit results are available below.")
             else:
                 st.success("Audit complete.")

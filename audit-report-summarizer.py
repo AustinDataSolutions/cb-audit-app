@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,9 @@ from dotenv import load_dotenv
 from openpyxl import load_workbook
 import pandas as pd
 import yaml
+
+# Single source of truth for which LLM errors are worth retrying (see CLAUDE.md).
+from audit import _is_retryable_llm_error
 
 try:
     from openai import OpenAI
@@ -290,9 +294,37 @@ def _collect_summary_records(
                 else:
                     raise ValueError("llm_provider must be 'anthropic' or 'openai'")
 
-            response_text = _call_llm_with_status(
-                _make_llm_call, DEFAULT_LLM_TIMEOUT, status_fn
-            )
+            # Retry transient LLM failures (timeouts, overload, dropped
+            # connections) the same way the audit does, so a blip during the
+            # summary phase doesn't lose the whole summary. First retry is quick
+            # since a stalled call already burned the full timeout.
+            retry_delays = [5, 60, 120]
+            response_text = None
+            for attempt in range(len(retry_delays) + 1):
+                try:
+                    response_text = _call_llm_with_status(
+                        _make_llm_call, DEFAULT_LLM_TIMEOUT, status_fn
+                    )
+                    break
+                except Exception as e:
+                    if _is_retryable_llm_error(e) and attempt < len(retry_delays):
+                        delay = retry_delays[attempt]
+                        logger.warning(
+                            "Summary for %s: retryable error (%s), retrying in %ds (attempt %d/%d)",
+                            category, type(e).__name__, delay, attempt + 1, len(retry_delays) + 1,
+                        )
+                        if status_fn:
+                            for remaining in range(delay, 0, -1):
+                                status_fn(
+                                    f"LLM request failed (attempt {attempt + 1}/{len(retry_delays) + 1}). "
+                                    f"Retrying in {remaining}s…"
+                                )
+                                time.sleep(1)
+                            status_fn("")
+                        else:
+                            time.sleep(delay)
+                        continue
+                    raise
             summary_text = _parse_llm_summary(response_text, warn_fn)
 
         category_key = _topic_key(category)
