@@ -445,6 +445,7 @@ def detect_partial_audit(audit_bytes):
     """
     result = {
         "is_partial": False,
+        "recognized_output_format": False,
         "completed_categories": set(),
         "incomplete_categories": set(),
         "unjudged_categories": set(),
@@ -495,6 +496,7 @@ def detect_partial_audit(audit_bytes):
             return result
 
         # This is our output format - analyze category completion
+        result["recognized_output_format"] = True
         result["is_partial"] = True
 
         if has_id_column:
@@ -1033,7 +1035,11 @@ def run_audit(
 
         # log_fn(f"Sending message to LLM for category {category}...")
 
-        retry_delays = [30, 60, 120]
+        # First retry is near-immediate: a stalled call has already burned the
+        # full LLM timeout (~5 min), so if the network has recovered we resume
+        # fast rather than waiting. Longer backoffs follow for a persistent
+        # outage.
+        retry_delays = [5, 60, 120]
         response_text = None
         for attempt in range(len(retry_delays) + 1):
             try:

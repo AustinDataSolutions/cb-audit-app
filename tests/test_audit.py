@@ -374,6 +374,7 @@ class TestDetectPartialAudit:
         ])
         result = audit.detect_partial_audit(wb_bytes)
         assert result["is_partial"] is False
+        assert result["recognized_output_format"] is True  # complete audit, our format
         assert "TopicA" in result["completed_categories"]
 
     def test_partial_incomplete(self):
@@ -393,6 +394,7 @@ class TestDetectPartialAudit:
         })
         result = audit.detect_partial_audit(wb_bytes)
         assert result["is_partial"] is False
+        assert result["recognized_output_format"] is False  # not our output format
 
     def test_mixed_categories(self):
         wb_bytes = _build_audit_workbook([
