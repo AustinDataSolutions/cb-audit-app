@@ -1033,7 +1033,11 @@ def run_audit(
 
         # log_fn(f"Sending message to LLM for category {category}...")
 
-        retry_delays = [30, 60, 120]
+        # First retry is near-immediate: a stalled call has already burned the
+        # full LLM timeout (~5 min), so if the network has recovered we resume
+        # fast rather than waiting another 30s. Longer backoffs follow for a
+        # persistent outage.
+        retry_delays = [5, 30, 60, 120]
         response_text = None
         for attempt in range(len(retry_delays) + 1):
             try:
