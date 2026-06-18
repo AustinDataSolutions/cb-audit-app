@@ -57,6 +57,38 @@ def _load_app_module():
 
 
 # ===========================================================================
+# _aarp_email_domain_warning
+# ===========================================================================
+
+class TestAarpEmailDomainWarning:
+    def test_no_warning_when_client_not_aarp(self):
+        app = _load_app_module()
+        assert app._aarp_email_domain_warning("the organization", "x@gmail.com") is None
+
+    def test_no_warning_for_approved_domains_when_aarp(self):
+        app = _load_app_module()
+        assert app._aarp_email_domain_warning("AARP", "person@aarp.org") is None
+        assert app._aarp_email_domain_warning("AARP", "a@austindatasolutions.com") is None
+
+    def test_warns_for_offdomain_when_aarp(self):
+        app = _load_app_module()
+        msg = app._aarp_email_domain_warning("AARP", "person@gmail.com")
+        assert msg is not None
+        assert "aarp.org" in msg and "austindatasolutions.com" in msg
+
+    def test_no_warning_for_empty_address(self):
+        app = _load_app_module()
+        assert app._aarp_email_domain_warning("AARP", "") is None
+        assert app._aarp_email_domain_warning("AARP", None) is None
+
+    def test_case_and_whitespace_insensitive(self):
+        app = _load_app_module()
+        assert app._aarp_email_domain_warning("aarp", "  PERSON@AARP.ORG  ") is None
+        # client name is matched case-insensitively / as a substring
+        assert app._aarp_email_domain_warning("AARP Inc.", "x@elsewhere.com") is not None
+
+
+# ===========================================================================
 # _build_completed_filename
 # ===========================================================================
 

@@ -35,6 +35,33 @@ def _email_configured():
     return all(cfg.get(k) for k in ("host", "user", "password", "sender"))
 
 
+# When the client (ORGANIZATION secret) is AARP, results should only go to
+# approved domains; flag anything else so the workbook isn't mailed to an
+# outside address by mistake.
+AARP_APPROVED_EMAIL_DOMAINS = ("@aarp.org", "@austindatasolutions.com")
+
+
+def _aarp_email_domain_warning(organization, address):
+    """Return a warning string if the AARP client's recipient is off-domain.
+
+    Returns None when the check doesn't apply (client isn't AARP, no address
+    entered yet, or the address is on an approved domain).
+    """
+    if "aarp" not in (organization or "").casefold():
+        return None
+    addr = (address or "").strip().casefold()
+    if not addr:
+        return None
+    if addr.endswith(AARP_APPROVED_EMAIL_DOMAINS):
+        return None
+    approved = " or ".join(AARP_APPROVED_EMAIL_DOMAINS)
+    return (
+        f"“{address.strip()}” isn’t an approved AARP recipient domain "
+        f"({approved}). Double-check the address before running — results "
+        f"will still be emailed there if you proceed."
+    )
+
+
 # Email delivery now runs inside the background worker (audit_worker._send_email)
 # so the workbook is sent even when no browser is attached at finish; the UI only
 # surfaces the recorded email_status. See _finalize_job_into_session below.
@@ -1033,6 +1060,11 @@ def main():
             key="email_results_address",
             placeholder="you@example.com",
         )
+        domain_warning = _aarp_email_domain_warning(
+            organization, st.session_state.get("email_results_address")
+        )
+        if domain_warning:
+            st.warning(domain_warning)
         if not _email_configured():
             st.caption(
                 "⚠️ Email sending isn't configured yet — ask an admin to add "
