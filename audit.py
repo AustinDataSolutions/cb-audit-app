@@ -445,6 +445,7 @@ def detect_partial_audit(audit_bytes):
     """
     result = {
         "is_partial": False,
+        "recognized_output_format": False,
         "completed_categories": set(),
         "incomplete_categories": set(),
         "unjudged_categories": set(),
@@ -495,6 +496,7 @@ def detect_partial_audit(audit_bytes):
             return result
 
         # This is our output format - analyze category completion
+        result["recognized_output_format"] = True
         result["is_partial"] = True
 
         if has_id_column:

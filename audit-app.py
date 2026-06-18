@@ -410,6 +410,20 @@ def _checkpoint_filename(uploaded_file):
     return name
 
 
+def _is_summary_only_upload(detection):
+    """True when the upload is a recognized, fully-completed audit.
+
+    There's nothing left to audit, so running it just (re)generates the summary
+    on the uploaded workbook rather than re-running the audit.
+    """
+    return bool(
+        detection
+        and detection.get("recognized_output_format")
+        and not detection.get("is_partial")
+        and detection.get("completed_categories")
+    )
+
+
 def _next_checkpoint_topic(current, total):
     """Topic the next checkpoint will land on.
 
@@ -609,6 +623,12 @@ def main():
                 f"Topic selection is locked to the categories in the checkpoint — "
                 f"only not-yet-completed categories will be re-audited, and any partially-audited "
                 f"category will be re-audited entirely."
+            )
+        elif _is_summary_only_upload(partial_detection):
+            st.info(
+                "This is a completed audit. Running will (re)generate the summary "
+                "for low-accuracy topics — the audit itself won't be re-run. "
+                "Re-upload a completed audit any time to regenerate its summary."
             )
 
         # Reformat functionality
@@ -950,8 +970,14 @@ def main():
         else "; ".join(missing_reasons)
     )
 
+    # A re-uploaded completed audit runs summary-only (no audit phase), so the
+    # per-call audit-limit warnings below don't apply.
+    summary_only_mode = _is_summary_only_upload(
+        st.session_state.get("partial_audit_detection", {})
+    )
+
     audit_warnings = []
-    if uploaded_audit:
+    if uploaded_audit and not summary_only_mode:
         try:
             audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
             if not audit_bytes_for_stats:
@@ -1141,15 +1167,72 @@ def main():
     # ------------------------------------------------------------------
     def _launch_audit_job():
         """Build params on the main thread and hand the run to the worker."""
+        if uploaded_audit is None:
+            st.error("Please upload an audit file before running the audit.")
+            st.session_state["audit_run_requested"] = False
+            return
+
+        if use_manual_api_key:
+            final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
+            final_openai_key = openai_api_key if llm_provider == "openai" else None
+        else:
+            final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
+            final_openai_key = api_key if llm_provider == "openai" and api_key else None
+
+        summary_prompt_val = st.session_state.get("summary_prompt", summary_prompt_default)
+        accuracy_threshold_val = st.session_state.get("accuracy_threshold", 0.80)
+        summary_kwargs = dict(
+            msg_template=summary_prompt_val,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            max_tokens=int(max_tokens),
+            accuracy_threshold=accuracy_threshold_val,
+            model_info=model_info,
+            anthropic_api_key=final_anthropic_key,
+            openai_api_key=final_openai_key,
+        )
+        email_payload = audit_worker.EmailPayload(
+            enabled=bool(st.session_state.get("email_results_enabled")),
+            recipient=(st.session_state.get("email_results_address") or "").strip(),
+            smtp=_smtp_config(),
+        )
+
+        def _start(params, label):
+            try:
+                job = registry.start(params)
+            except audit_worker.AlreadyRunning:
+                job = registry.active()
+            if job is not None:
+                st.session_state["active_run_id"] = job.run_id
+                logger.info("%s launched: provider=%s, model=%s", label, llm_provider, model_name)
+            st.session_state["audit_run_requested"] = False
+            st.session_state.pop("finalized_run_id", None)
+            st.rerun()
+
+        # Summary-only: a re-uploaded completed audit has nothing left to audit,
+        # so skip the audit phase and summarize the uploaded workbook directly.
+        if summary_only_mode:
+            _start(
+                audit_worker.JobParams(
+                    audit_kwargs={},
+                    summary_kwargs=summary_kwargs,
+                    completed_filename=_build_completed_filename(uploaded_audit),
+                    checkpoint_filename=_checkpoint_filename(uploaded_audit),
+                    include_summary=True,
+                    email=email_payload,
+                    summary_only=True,
+                    summary_only_input=uploaded_audit.getvalue(),
+                ),
+                "Summary-only job",
+            )
+            return
+
+        # Full audit (+ summary) path.
         partial_detection = st.session_state.get("partial_audit_detection", {})
         is_partial_audit = partial_detection.get("is_partial", False)
 
         audit_bytes = st.session_state.get("reformatted_audit_bytes")
         if not audit_bytes:
-            if uploaded_audit is None:
-                st.error("Please upload an audit file before running the audit.")
-                st.session_state["audit_run_requested"] = False
-                return
             if is_partial_audit:
                 # Checkpoints are already in our format — skip reformatting.
                 audit_bytes = uploaded_audit.getvalue()
@@ -1167,21 +1250,11 @@ def main():
         else:
             topics_to_audit = st.session_state.get("topics_to_audit")
 
-        if use_manual_api_key:
-            final_anthropic_key = anthropic_api_key if llm_provider == "anthropic" else None
-            final_openai_key = openai_api_key if llm_provider == "openai" else None
-        else:
-            final_anthropic_key = api_key if llm_provider == "anthropic" and api_key else None
-            final_openai_key = api_key if llm_provider == "openai" and api_key else None
-
         existing_audit_bytes = None
         completed_categories = None
         if is_partial_audit:
             existing_audit_bytes = uploaded_audit.getvalue()
             completed_categories = partial_detection.get("completed_categories", set())
-
-        summary_prompt_val = st.session_state.get("summary_prompt", summary_prompt_default)
-        accuracy_threshold_val = st.session_state.get("accuracy_threshold", 0.80)
 
         audit_kwargs = dict(
             audit_excel_bytes=audit_bytes,
@@ -1209,38 +1282,17 @@ def main():
             audit_warnings=audit_warnings,
             include_model_description=include_model_description,
         )
-        summary_kwargs = dict(
-            msg_template=summary_prompt_val,
-            llm_provider=llm_provider,
-            model_name=model_name,
-            max_tokens=int(max_tokens),
-            accuracy_threshold=accuracy_threshold_val,
-            model_info=model_info,
-            anthropic_api_key=final_anthropic_key,
-            openai_api_key=final_openai_key,
-        )
-        params = audit_worker.JobParams(
-            audit_kwargs=audit_kwargs,
-            summary_kwargs=summary_kwargs,
-            completed_filename=_build_completed_filename(uploaded_audit),
-            checkpoint_filename=_checkpoint_filename(uploaded_audit),
-            include_summary=True,
-            email=audit_worker.EmailPayload(
-                enabled=bool(st.session_state.get("email_results_enabled")),
-                recipient=(st.session_state.get("email_results_address") or "").strip(),
-                smtp=_smtp_config(),
+        _start(
+            audit_worker.JobParams(
+                audit_kwargs=audit_kwargs,
+                summary_kwargs=summary_kwargs,
+                completed_filename=_build_completed_filename(uploaded_audit),
+                checkpoint_filename=_checkpoint_filename(uploaded_audit),
+                include_summary=True,
+                email=email_payload,
             ),
+            "Audit job",
         )
-        try:
-            job = registry.start(params)
-        except audit_worker.AlreadyRunning:
-            job = registry.active()
-        if job is not None:
-            st.session_state["active_run_id"] = job.run_id
-            logger.info("Audit job launched: provider=%s, model=%s", llm_provider, model_name)
-        st.session_state["audit_run_requested"] = False
-        st.session_state.pop("finalized_run_id", None)
-        st.rerun()
 
     @st.fragment(run_every="2s")
     def _audit_progress_panel():
@@ -1394,7 +1446,7 @@ def main():
                 )
         else:
             st.button(
-                "Run audit",
+                "Generate summary" if summary_only_mode else "Run audit",
                 type="primary",
                 disabled=not can_run_audit,
                 help=run_help,

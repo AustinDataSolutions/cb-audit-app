@@ -57,6 +57,53 @@ def _load_app_module():
 
 
 # ===========================================================================
+# _is_summary_only_upload
+# ===========================================================================
+
+class TestIsSummaryOnlyUpload:
+    def test_complete_audit_is_summary_only(self):
+        app = _load_app_module()
+        detection = {
+            "recognized_output_format": True,
+            "is_partial": False,
+            "completed_categories": {"TopicA"},
+        }
+        assert app._is_summary_only_upload(detection) is True
+
+    def test_partial_checkpoint_is_not(self):
+        app = _load_app_module()
+        detection = {
+            "recognized_output_format": True,
+            "is_partial": True,
+            "completed_categories": {"TopicA"},
+        }
+        assert app._is_summary_only_upload(detection) is False
+
+    def test_non_audit_file_is_not(self):
+        app = _load_app_module()
+        detection = {
+            "recognized_output_format": False,
+            "is_partial": False,
+            "completed_categories": set(),
+        }
+        assert app._is_summary_only_upload(detection) is False
+
+    def test_recognized_but_no_categories_is_not(self):
+        app = _load_app_module()
+        detection = {
+            "recognized_output_format": True,
+            "is_partial": False,
+            "completed_categories": set(),
+        }
+        assert app._is_summary_only_upload(detection) is False
+
+    def test_empty_detection_is_not(self):
+        app = _load_app_module()
+        assert app._is_summary_only_upload({}) is False
+        assert app._is_summary_only_upload(None) is False
+
+
+# ===========================================================================
 # _aarp_email_domain_warning
 # ===========================================================================
 
