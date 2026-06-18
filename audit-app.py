@@ -57,8 +57,8 @@ def _aarp_email_domain_warning(organization, address):
     approved = " or ".join(AARP_APPROVED_EMAIL_DOMAINS)
     return (
         f"“{address.strip()}” isn’t an approved AARP recipient domain "
-        f"({approved}). Double-check the address before running — results "
-        f"will still be emailed there if you proceed."
+        f"({approved}). The audit is blocked until you use an approved address "
+        f"or clear the field (to run without emailing)."
     )
 
 
@@ -927,6 +927,20 @@ def main():
         else:
             if not api_key:
                 missing_reasons.append("Provide an OpenAI API key")
+
+    # For the AARP client, block the run while the results email is set to an
+    # off-domain address (read from session_state, which Streamlit restores
+    # before the script runs — so a "type then immediately click Run" can't slip
+    # through: can_run_audit gates both the button and the launch). Empty address
+    # or a disabled email checkbox doesn't block.
+    email_enabled_state = bool(st.session_state.get("email_results_enabled", True))
+    if email_enabled_state and _aarp_email_domain_warning(
+        organization, st.session_state.get("email_results_address")
+    ):
+        approved = " or ".join(AARP_APPROVED_EMAIL_DOMAINS)
+        missing_reasons.append(
+            f"Use an approved AARP results email ({approved}) or clear the address"
+        )
 
     can_run_audit = not missing_reasons
     run_help = (
