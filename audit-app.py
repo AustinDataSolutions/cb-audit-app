@@ -13,6 +13,7 @@ import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL
+from audit_email import is_valid_email
 import audit_worker
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,8 @@ def _aarp_email_domain_warning(organization, address):
     approved = " or ".join(AARP_APPROVED_EMAIL_DOMAINS)
     return (
         f"“{address.strip()}” isn’t an approved AARP recipient domain "
-        f"({approved}). The audit is blocked until you use an approved address "
-        f"or clear the field (to run without emailing)."
+        f"({approved}). Click “Use this address anyway” to send results there, "
+        f"or edit the address."
     )
 
 
@@ -928,19 +929,19 @@ def main():
             if not api_key:
                 missing_reasons.append("Provide an OpenAI API key")
 
-    # For the AARP client, block the run while the results email is set to an
-    # off-domain address (read from session_state, which Streamlit restores
-    # before the script runs — so a "type then immediately click Run" can't slip
-    # through: can_run_audit gates both the button and the launch). Empty address
-    # or a disabled email checkbox doesn't block.
+    # While "Email results to me" is checked, the run waits until the recipient
+    # address has been confirmed (the "Confirm email address" button in the
+    # Delivery section). Reading from session_state — which Streamlit restores
+    # before the script runs — means this gates both the Run button and the
+    # launch, so a "type then immediately click Run" can't slip through. Editing
+    # the address after confirming clears the match and re-disables the run.
     email_enabled_state = bool(st.session_state.get("email_results_enabled", True))
-    if email_enabled_state and _aarp_email_domain_warning(
-        organization, st.session_state.get("email_results_address")
-    ):
-        approved = " or ".join(AARP_APPROVED_EMAIL_DOMAINS)
-        missing_reasons.append(
-            f"Use an approved AARP results email ({approved}) or clear the address"
-        )
+    if email_enabled_state:
+        addr_now = (st.session_state.get("email_results_address") or "").strip()
+        if not (addr_now and addr_now == st.session_state.get("email_confirmed_address")):
+            missing_reasons.append(
+                "Confirm the results email address (or uncheck “Email results to me”)"
+            )
 
     can_run_audit = not missing_reasons
     run_help = (
@@ -1055,9 +1056,38 @@ def main():
     ):
         st.session_state["audit_run_requested"] = False
 
+    # ------------------------------------------------------------------
+    # Delivery
+    # ------------------------------------------------------------------
     # Opt-in email delivery — survives Streamlit Cloud winding the app down
-    # before the user can download.  Rendered every pass so the widget values
-    # persist in session_state through the run.
+    # before the user can download. Rendered every pass so the widget values
+    # persist in session_state through the run. While email is on, the run waits
+    # for the address to be confirmed (validated in the on_click callbacks).
+    st.subheader("Delivery")
+
+    def _confirm_email():
+        addr = (st.session_state.get("email_results_address") or "").strip()
+        if not addr:
+            return
+        if not is_valid_email(addr):
+            st.session_state["email_invalid_attempt"] = addr
+            st.session_state.pop("email_override_address", None)
+            return
+        st.session_state.pop("email_invalid_attempt", None)
+        if _aarp_email_domain_warning(organization, addr):
+            # Off an approved domain — soft block: require an explicit second
+            # click before this address counts as confirmed.
+            st.session_state["email_override_address"] = addr
+        else:
+            st.session_state["email_confirmed_address"] = addr
+            st.session_state.pop("email_override_address", None)
+
+    def _confirm_email_override():
+        addr = (st.session_state.get("email_results_address") or "").strip()
+        if addr:
+            st.session_state["email_confirmed_address"] = addr
+        st.session_state.pop("email_override_address", None)
+
     email_enabled = st.checkbox(
         "Email results to me",
         value=True,
@@ -1074,16 +1104,33 @@ def main():
             key="email_results_address",
             placeholder="you@example.com",
         )
-        domain_warning = _aarp_email_domain_warning(
-            organization, st.session_state.get("email_results_address")
-        )
-        if domain_warning:
-            st.warning(domain_warning)
+        address = (st.session_state.get("email_results_address") or "").strip()
+        is_confirmed = bool(address) and address == st.session_state.get("email_confirmed_address")
+
         if not _email_configured():
             st.caption(
                 "⚠️ Email sending isn't configured yet — ask an admin to add "
                 "SMTP settings to the app secrets."
             )
+
+        if is_confirmed:
+            st.success(f"✓ Results will be emailed to {address}.")
+        else:
+            st.button(
+                "Confirm email address",
+                on_click=_confirm_email,
+                disabled=not address,
+                help=None if address else "Enter an email address first.",
+            )
+            if address and st.session_state.get("email_invalid_attempt") == address:
+                st.error("That doesn't look like a valid email address.")
+            elif address and st.session_state.get("email_override_address") == address:
+                st.warning(_aarp_email_domain_warning(organization, address))
+                st.button(
+                    "Use this address anyway",
+                    type="primary",
+                    on_click=_confirm_email_override,
+                )
 
     # ------------------------------------------------------------------
     # Launch / poll the background audit job
