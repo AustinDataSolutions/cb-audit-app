@@ -1065,22 +1065,29 @@ def main():
     # for the address to be confirmed (validated in the on_click callbacks).
     st.subheader("Delivery")
 
+    def _clear_email_feedback():
+        # Editing the address resets any prior confirm feedback so stale
+        # errors/warnings don't linger. A changed address also stops matching
+        # email_confirmed_address, so the run re-locks until reconfirmed.
+        st.session_state.pop("email_confirm_error", None)
+        st.session_state.pop("email_override_address", None)
+
     def _confirm_email():
         addr = (st.session_state.get("email_results_address") or "").strip()
+        st.session_state.pop("email_confirm_error", None)
+        st.session_state.pop("email_override_address", None)
         if not addr:
+            st.session_state["email_confirm_error"] = "Enter an email address to confirm."
             return
         if not is_valid_email(addr):
-            st.session_state["email_invalid_attempt"] = addr
-            st.session_state.pop("email_override_address", None)
+            st.session_state["email_confirm_error"] = "That doesn't look like a valid email address."
             return
-        st.session_state.pop("email_invalid_attempt", None)
         if _aarp_email_domain_warning(organization, addr):
             # Off an approved domain — soft block: require an explicit second
             # click before this address counts as confirmed.
             st.session_state["email_override_address"] = addr
         else:
             st.session_state["email_confirmed_address"] = addr
-            st.session_state.pop("email_override_address", None)
 
     def _confirm_email_override():
         addr = (st.session_state.get("email_results_address") or "").strip()
@@ -1103,6 +1110,7 @@ def main():
             "Send results to (email address):",
             key="email_results_address",
             placeholder="you@example.com",
+            on_change=_clear_email_feedback,
         )
         address = (st.session_state.get("email_results_address") or "").strip()
         is_confirmed = bool(address) and address == st.session_state.get("email_confirmed_address")
@@ -1116,14 +1124,10 @@ def main():
         if is_confirmed:
             st.success(f"✓ Results will be emailed to {address}.")
         else:
-            st.button(
-                "Confirm email address",
-                on_click=_confirm_email,
-                disabled=not address,
-                help=None if address else "Enter an email address first.",
-            )
-            if address and st.session_state.get("email_invalid_attempt") == address:
-                st.error("That doesn't look like a valid email address.")
+            st.button("Confirm email address", on_click=_confirm_email)
+            error_msg = st.session_state.get("email_confirm_error")
+            if error_msg:
+                st.error(error_msg)
             elif address and st.session_state.get("email_override_address") == address:
                 st.warning(_aarp_email_domain_warning(organization, address))
                 st.button(
