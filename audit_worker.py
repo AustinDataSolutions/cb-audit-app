@@ -357,10 +357,15 @@ def _run_pipeline(
         if params.include_summary:
             job.set_status(JobStatus.RUNNING_SUMMARY)
             try:
+                # summarize_audit_report has no save_progress_fn (only run_audit
+                # checkpoints), so pass the callback subset it actually accepts.
+                summary_callbacks = {
+                    k: v for k, v in callbacks.items() if k != "save_progress_fn"
+                }
                 summary_bytes = summarize_fn(
                     audit_excel_input=audit_bytes,
                     **params.summary_kwargs,
-                    **callbacks,
+                    **summary_callbacks,
                 )
                 job.set_output(summary_bytes, params.completed_filename, is_partial=False)
             except _summary_stop_exception():

@@ -70,6 +70,47 @@ def test_summary_runs_and_replaces_output(worker_module):
     assert snap.is_partial is False
 
 
+def test_summary_gets_only_accepted_callbacks(worker_module):
+    """Regression: summarize_audit_report has no save_progress_fn.
+
+    The fake mirrors the real summarizer signature exactly (the callbacks it
+    accepts, no save_progress_fn, no **kwargs catch-all), so passing the full
+    run_audit callback set would raise TypeError — which is what happened in
+    production before the fix.
+    """
+    w = worker_module
+    reg = w.JobRegistry()
+
+    def fake_run(*, progress_fn, save_progress_fn, **kw):
+        progress_fn(1, 1, "A")
+        return b"AUDIT"
+
+    def fake_sum(
+        *,
+        audit_excel_input,
+        msg_template=None,
+        llm_provider="anthropic",
+        model_name=None,
+        max_tokens=0,
+        accuracy_threshold=0.8,
+        model_info="",
+        anthropic_api_key=None,
+        openai_api_key=None,
+        log_fn=None,
+        warn_fn=None,
+        progress_fn=None,
+        check_stop_fn=None,
+        status_fn=None,
+    ):
+        return b"SUMMARY"
+
+    job = reg.start(_make_params(w, include_summary=True), run_fn=fake_run, summarize_fn=fake_sum)
+    _join(job)
+    snap = job.snapshot()
+    assert snap.status == w.JobStatus.DONE, snap.error_message
+    assert snap.output_bytes == b"SUMMARY"
+
+
 def test_summary_stop_keeps_audit_output(worker_module):
     w = worker_module
     reg = w.JobRegistry()
