@@ -26,6 +26,7 @@ import importlib.util
 import logging
 import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -135,6 +136,7 @@ class JobSnapshot:
     summary_error: Optional[str]
     warnings: tuple
     email_status: Optional[str]
+    started_at: float
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +155,7 @@ class AuditJob:
     def __init__(self, run_id: str, params: JobParams):
         self.run_id = run_id
         self.params = params
+        self.started_at = time.time()  # wall-clock launch time, for UI "running for N min"
         self._lock = threading.Lock()
         self.stop_event = threading.Event()  # UI-written; threading.Event is thread-safe
         self.thread: Optional[threading.Thread] = None
@@ -275,6 +278,7 @@ class AuditJob:
                 summary_error=self.summary_error,
                 warnings=tuple(self.warnings),
                 email_status=self.email_status,
+                started_at=self.started_at,
             )
 
     def is_terminal(self) -> bool:

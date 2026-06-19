@@ -94,8 +94,10 @@ LLM calls have a 300s timeout (`DEFAULT_LLM_TIMEOUT`). Retryable errors (429,
 
 ### Streamlit session state keys
 - `audit_run_requested`: True between the "Run audit" click and the launch
-- `active_run_id`: the only handle from the session to the background job;
-  re-derived from `registry.active()` on reconnect
+- `active_run_id`: the only handle from the session to the background job. Set
+  when this session launches a run. On reconnect it is re-derived from
+  `registry.active()` **only if** the `?run=<run_id>` URL query param matches —
+  see run ownership below.
 - `finalized_run_id`: idempotency guard so a terminal job is promoted once
 - `audit_output_bytes` / `audit_output_filename`: final or promoted partial
   output for download
@@ -105,6 +107,30 @@ Live progress, the latest checkpoint bytes, the stop signal, and email status
 all live on the `AuditJob` (not session_state). Within `run_audit`, checkpoints
 are still written every `CHECKPOINT_INTERVAL` categories, on the last category,
 and on retry/stop/error.
+
+### Run ownership (shared-password, single active run)
+The `JobRegistry` is process-global and allows **one active audit at a time**
+across the whole deployment (Community Cloud = single process). Because the app
+is gated by a single shared `APP_PASSWORD`, multiple people can be connected at
+once, so "who owns the running audit" matters:
+- The launching session stamps `?run=<run_id>` into the URL query string and
+  sets `active_run_id`. That token survives a websocket reconnect **within the
+  same browser tab**, so only the owner's tab re-attaches to the live run (full
+  progress panel + Stop + checkpoint download).
+- A different session (another teammate, or the owner after losing the tab/URL)
+  does **not** carry the token, so it can't adopt the run. A full-page gate near
+  the top of `main()` renders only the title + a read-only "an audit is already
+  running" banner/progress (`_busy_gate`, polls every 2s) and `return`s before
+  the upload area, sidebar, or Run button — the rest of the UI is hidden until
+  the active run ends. It cannot stop or download the run.
+- Idle sessions render `_collision_heartbeat` (polls every 2s) so the gate
+  appears within ~2s of another session starting a run, without needing a click.
+- `registry.start()` raises `AlreadyRunning` if a run is active; the launch path
+  backs out (does **not** hijack the existing run) and falls through to the busy
+  banner. Email delivery still lands the result for whoever configured it.
+- **Accepted residual:** with no per-user identity, a reconnecting owner who
+  lost the URL is indistinguishable from a teammate — both get the busy banner
+  and rely on email for the result.
 
 ## Conventions
 - Callbacks follow the pattern: `log_fn`, `warn_fn`, `progress_fn`, `status_fn`,

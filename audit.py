@@ -1148,7 +1148,7 @@ def run_audit(
             extra = returned_ids - sent_ids
             if missing:
                 logger.warning("Category %s: %d/%d sentences missing from LLM response", category, len(missing), len(sent_ids))
-                warn_fn(f"Category \"{category}\": {len(missing)} of {len(sent_ids)} sentences missing from LLM response.")
+                warn_fn(f"{len(missing)} of {len(sent_ids)} sentences missing from LLM response for the category `{category}`.")
             if extra:
                 logger.warning("Category %s: LLM returned %d unrecognized sentence IDs", category, len(extra))
                 warn_fn(f"Category \"{category}\": LLM returned {len(extra)} unrecognized sentence IDs.")
