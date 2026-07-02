@@ -110,6 +110,9 @@ class JobParams:
     checkpoint_filename: str
     include_summary: bool
     email: EmailPayload
+    # Human-facing topic-model name for the email subject (XML root title, or a
+    # cleaned audit filename when no model tree was uploaded).
+    model_display_name: Optional[str] = None
     # Summary-only run (re-uploaded completed audit): skip the audit phase and
     # summarize summary_only_input directly.
     summary_only: bool = False
@@ -334,6 +337,7 @@ def _send_email(job: AuditJob, context_label: str):
         job.set_email_status("skipped:no output to send")
         return
     filename = snap.output_filename or "audit.xlsx"
+    model_name = job.params.model_display_name or filename
     try:
         audit_email.send_audit_email(
             smtp_host=smtp["host"],
@@ -342,7 +346,7 @@ def _send_email(job: AuditJob, context_label: str):
             smtp_password=smtp["password"],
             sender=smtp["sender"],
             recipient=payload.recipient,
-            subject=f"Audit results ({context_label}): {filename}",
+            subject=f"Qualtrics topic model audit results ({context_label}): {model_name}",
             body=(
                 f"Your audit run has finished ({context_label}).\n\n"
                 f"The workbook is attached: {filename}\n"

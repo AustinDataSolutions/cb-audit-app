@@ -12,7 +12,7 @@ import hmac
 import time
 from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
-from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL
+from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL, _extract_model_root_info
 from audit_email import is_valid_email
 import audit_worker
 
@@ -408,6 +408,28 @@ def _checkpoint_filename(uploaded_file):
         base, ext = os.path.splitext(name)
         return f"{base}_checkpoint{ext}"
     return name
+
+
+def _derive_model_display_name(model_tree, uploaded_audit):
+    """Human-facing topic-model name for the email subject.
+
+    Prefer the root node title parsed from the model tree XML; when no tree is
+    uploaded (or it can't be parsed), fall back to the audit filename with its
+    extension and status suffixes stripped.
+    """
+    if model_tree is not None:
+        try:
+            title, _ = _extract_model_root_info(model_tree.getvalue())
+            if title and title != "Unknown":
+                return title
+        except Exception:
+            pass  # malformed tree — fall through to the filename
+    name = getattr(uploaded_audit, "name", "") or "audit"
+    base, _ext = os.path.splitext(name)
+    if base.endswith("_sortable"):
+        base = base[: -len("_sortable")]
+    base = _strip_status_suffixes(base)
+    return base.strip() or "audit"
 
 
 def _is_summary_only_upload(detection):
@@ -1009,7 +1031,7 @@ def main():
         addr_now = (st.session_state.get("email_results_address") or "").strip()
         if not (addr_now and addr_now == st.session_state.get("email_confirmed_address")):
             missing_reasons.append(
-                "Confirm the results email address (or uncheck “Email results to me”)"
+                "Confirm email address to receive results (or uncheck “Email results to me”)"
             )
 
     can_run_audit = not missing_reasons
@@ -1164,7 +1186,7 @@ def main():
         st.session_state.pop("email_override_address", None)
 
     email_enabled = st.checkbox(
-        "Email results to me",
+        "Email results to me (recommended)",
         value=True,
         key="email_results_enabled",
         help=(
@@ -1190,7 +1212,7 @@ def main():
             )
 
         if is_confirmed:
-            st.success(f"✓ Results will be emailed to {address}.")
+            st.caption(f"✓ Email address set — results will be sent to {address}.")
         else:
             st.button("Confirm email address", on_click=_confirm_email)
             error_msg = st.session_state.get("email_confirm_error")
@@ -1269,6 +1291,7 @@ def main():
                     checkpoint_filename=_checkpoint_filename(uploaded_audit),
                     include_summary=True,
                     email=email_payload,
+                    model_display_name=_derive_model_display_name(model_tree, uploaded_audit),
                     summary_only=True,
                     summary_only_input=uploaded_audit.getvalue(),
                 ),
@@ -1339,6 +1362,7 @@ def main():
                 checkpoint_filename=_checkpoint_filename(uploaded_audit),
                 include_summary=True,
                 email=email_payload,
+                model_display_name=_derive_model_display_name(model_tree, uploaded_audit),
             ),
             "Audit job",
         )
