@@ -8,7 +8,7 @@ even if the app is later evicted.
 
 This module is intentionally UI-free and dependency-free (standard-library
 ``smtplib`` only) so it can be unit-tested without Streamlit or a real SMTP
-server.  The app wraps it with config from ``st.secrets`` and error handling.
+server.  The app wraps it with the settings from the environment and error handling.
 """
 from __future__ import annotations
 

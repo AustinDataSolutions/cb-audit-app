@@ -328,3 +328,71 @@ def test_snapshot_is_threadsafe_smoke(worker_module):
     finally:
         stop.set()
         t.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# on_email_sent: the hook the UI uses to record a usage event, worker-side
+# ---------------------------------------------------------------------------
+
+def _email_params(worker, on_email_sent):
+    return worker.JobParams(
+        audit_kwargs={},
+        summary_kwargs={},
+        completed_filename="out_completed.xlsx",
+        checkpoint_filename="out_checkpoint.xlsx",
+        include_summary=False,
+        email=worker.EmailPayload(
+            enabled=True,
+            recipient="a@b.com",
+            smtp={"host": "h", "port": 25, "user": "u", "password": "p", "sender": "s@b.com"},
+        ),
+        on_email_sent=on_email_sent,
+    )
+
+
+def test_on_email_sent_runs_once_after_a_successful_send(worker_module, monkeypatch):
+    w = worker_module
+    import audit_email
+    monkeypatch.setattr(audit_email, "send_audit_email", lambda **kwargs: None)
+    calls = []
+    job = w.JobRegistry().start(_email_params(w, lambda: calls.append(threading.current_thread().name)),
+                                run_fn=lambda **kw: b"FINAL")
+    _join(job)
+    assert job.snapshot().email_status == "sent:a@b.com"
+    assert len(calls) == 1 and calls[0].startswith("audit-job-")      # on the worker thread, not the UI's
+
+
+def test_on_email_sent_is_skipped_when_the_send_fails_or_is_skipped(worker_module, monkeypatch):
+    w = worker_module
+    import audit_email
+
+    def failing_send(**kwargs):
+        raise RuntimeError("mail server unreachable")
+
+    monkeypatch.setattr(audit_email, "send_audit_email", failing_send)
+    calls = []
+    job = w.JobRegistry().start(_email_params(w, lambda: calls.append(1)), run_fn=lambda **kw: b"FINAL")
+    _join(job)
+    assert job.snapshot().email_status.startswith("failed:")
+    assert job.snapshot().status == w.JobStatus.DONE
+    assert calls == []
+
+    params = w.JobParams(**{**_email_params(w, lambda: calls.append(1)).__dict__,
+                            "email": w.EmailPayload(enabled=False, recipient="", smtp={})})
+    job = w.JobRegistry().start(params, run_fn=lambda **kw: b"FINAL")
+    _join(job)
+    assert job.snapshot().email_status == "skipped:not enabled" and calls == []
+
+
+def test_a_failing_on_email_sent_never_changes_the_outcome(worker_module, monkeypatch):
+    w = worker_module
+    import audit_email
+    monkeypatch.setattr(audit_email, "send_audit_email", lambda **kwargs: None)
+
+    def broken():
+        raise RuntimeError("database locked")
+
+    job = w.JobRegistry().start(_email_params(w, broken), run_fn=lambda **kw: b"FINAL")
+    _join(job)
+    snap = job.snapshot()
+    assert snap.status == w.JobStatus.DONE and snap.email_status == "sent:a@b.com"

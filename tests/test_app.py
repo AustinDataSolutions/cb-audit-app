@@ -1,4 +1,4 @@
-"""Tests for audit-app.py — Streamlit UI logic (non-widget functions only)."""
+"""Tests for audit_page.py — Streamlit UI logic (non-widget functions only)."""
 from __future__ import annotations
 
 import os
@@ -11,19 +11,26 @@ import pytest
 from tests.conftest import _load_module
 
 
-# We cannot import audit-app.py directly because it calls st.set_page_config()
-# at module level. Instead we test the specific utility functions via importlib
-# with Streamlit mocked out.
+# We cannot import audit_page.py directly because it calls st.set_page_config()
+# and the sign-in gate at module level. Instead we test the specific utility
+# functions via importlib with Streamlit mocked out and sign-in disabled, so the
+# gate returns the local principal and nothing is written anywhere.
 
 def _load_app_module():
-    """Load audit-app.py with Streamlit fully mocked to prevent side effects."""
+    """Load audit_page.py with Streamlit fully mocked to prevent side effects."""
     import sys
     import importlib.util
+    import tempfile
+
+    saved_env = {k: os.environ.get(k) for k in ("AUTH_MODE", "DATA_DIR", "ORGANIZATION", "AUDIENCE")}
+    os.environ["AUTH_MODE"] = "disabled"
+    os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="audit-app-test-")
+    os.environ["ORGANIZATION"] = "TestOrg"
+    os.environ["AUDIENCE"] = "testers"
 
     # Create a mock streamlit module to prevent any Streamlit calls at import time
     mock_st = MagicMock()
-    mock_st.secrets = {"APP_PASSWORD": "test", "ORGANIZATION": "TestOrg", "AUDIENCE": "testers"}
-    mock_st.session_state = {"authenticated": True}
+    mock_st.session_state = {}
     mock_st.set_page_config = MagicMock()
     mock_st.cache_data = MagicMock()
 
@@ -41,10 +48,10 @@ def _load_app_module():
         sys.modules[mod_name] = mock_mod
 
     try:
-        module_path = os.path.join(os.path.dirname(__file__), "..", "audit-app.py")
-        spec = importlib.util.spec_from_file_location("audit_app", module_path)
+        module_path = os.path.join(os.path.dirname(__file__), "..", "audit_page.py")
+        spec = importlib.util.spec_from_file_location("audit_page", module_path)
         if spec is None or spec.loader is None:
-            raise ImportError("Unable to load audit-app.py")
+            raise ImportError("Unable to load audit_page.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
@@ -54,6 +61,11 @@ def _load_app_module():
         for mod_name in modules_to_mock:
             if mod_name not in saved_modules:
                 sys.modules.pop(mod_name, None)
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 # ===========================================================================

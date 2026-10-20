@@ -10,7 +10,7 @@ This module moves the work onto a daemon thread owned by a **process-global
 registry** (``JobRegistry``), so the run survives reconnects and Streamlit
 reruns — any new script run re-attaches to the same job by id. The worker is
 deliberately **Streamlit-free**: it never touches ``st.*``, ``st.session_state``
-or ``st.secrets`` (those are unsafe off the main thread and recreated on
+or Streamlit settings (those are unsafe off the main thread and recreated on
 reconnect). It only mutates a thread-safe :class:`AuditJob`; the UI polls that
 object and does all drawing on the main thread.
 
@@ -91,7 +91,7 @@ def _summary_stop_exception():
 
 @dataclass(frozen=True)
 class EmailPayload:
-    """Email settings resolved on the main thread (from st.secrets/session).
+    """Email settings resolved on the main thread (from the app settings and session).
 
     Frozen and passed into the worker so delivery never reads Streamlit state
     off-thread and fires even when no browser is attached at finish.
@@ -117,6 +117,10 @@ class JobParams:
     # summarize summary_only_input directly.
     summary_only: bool = False
     summary_only_input: Optional[bytes] = None
+    # Called once, on the worker thread, after a results email is actually sent
+    # (the UI records a usage event with it). Best-effort: a failure is logged
+    # and never changes the job's outcome.
+    on_email_sent: Optional[Callable[[], None]] = None
 
 
 @dataclass(frozen=True)
@@ -355,10 +359,16 @@ def _send_email(job: AuditJob, context_label: str):
             attachment_filename=filename,
         )
         job.set_email_status(f"sent:{payload.recipient}")
-        logger.info("Audit results emailed to %s (%s)", payload.recipient, context_label)
+        logger.info("Audit results emailed (%s)", context_label)
     except Exception as exc:  # best-effort
         logger.error("Failed to email audit results: %s", exc, exc_info=True)
         job.set_email_status(f"failed:{exc}")
+        return
+    if job.params.on_email_sent is not None:
+        try:
+            job.params.on_email_sent()
+        except Exception:  # never let bookkeeping change the outcome
+            logger.warning("on_email_sent callback failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

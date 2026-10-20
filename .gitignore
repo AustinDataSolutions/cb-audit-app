@@ -193,3 +193,8 @@ __pycache__/
 reference/
 # Claude Code local settings (personal, per-machine)
 .claude/settings.local.json
+
+# Local accounts and usage database (DATA_DIR default), backups, and any database copy
+.data/
+*.db
+.claude/launch.json
