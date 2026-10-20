@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+# Deploy with "New > Blueprint" in the Render dashboard (docs/render-deployment-runbook.md walks through it).
+# Deploys are manual (autoDeployTrigger off; set the Blueprint's Auto Sync to No after creation).
+# Values marked `sync: false` are entered in the dashboard, never committed. The disk holds the
+# accounts and usage database and its backups; uploaded workbooks never touch it.
+
+services:
+  - type: web
+    name: aarp-automatic-audit
+    runtime: python
+    region: virginia
+    # Deployed from this branch during the move from Community Cloud; the cut-over commit switches it
+    # to main (docs/render-deployment-runbook.md, section 6).
+    branch: ads-auth-accounts
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: "off"
+    buildCommand: ./scripts/render-build.sh
+    startCommand: ./scripts/start.sh
+    healthCheckPath: /_stcore/health
+    disk:
+      name: automatic-audit-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: AUTH_MODE
+        value: required
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STREAMLIT_SERVER_COOKIE_SECRET
+        generateValue: true
+      # Named in the prompts sent to the model provider and in the page title. Not secrets.
+      - key: ORGANIZATION
+        value: AARP
+      - key: AUDIENCE
+        sync: false
+      # Model provider keys. The app uses one provider per run, chosen in the sidebar.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      # Email delivery of finished workbooks ("Email results to me"). Leave the host blank to switch the
+      # feature off; the app then says email is not configured.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

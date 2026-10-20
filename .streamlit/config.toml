@@ -1,4 +1,16 @@
+[browser]
+gatherUsageStats = false
+
 [server]
+headless = true
+runOnSave = false
 # Disable file watching to prevent automatic reruns during long-running audits.
 # A git commit or file save would otherwise interrupt an in-progress audit.
 fileWatcherType = "none"
+# Audit workbooks and model trees are a few megabytes at most.
+maxUploadSize = 50
+maxMessageSize = 50
+# The server pings each browser and closes the connection when the reply is not processed within this
+# many seconds (default 30). A busy single-CPU instance can miss that window during a long run and sign
+# the user out mid-audit (seen on a sibling app, 2026-10-19). Two minutes of tolerance.
+websocketPingInterval = 120
