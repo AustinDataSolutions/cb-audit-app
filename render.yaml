@@ -9,9 +9,7 @@ services:
     name: aarp-automatic-audit
     runtime: python
     region: virginia
-    # Deployed from this branch during the move from Community Cloud; the cut-over commit switches it
-    # to main (docs/render-deployment-runbook.md, section 6).
-    branch: ads-auth-accounts
+    branch: main               # switched from ads-auth-accounts in the cut-over commit (runbook section 6)
     plan: 0.5c-512mb
     numInstances: 1
     autoDeployTrigger: "off"

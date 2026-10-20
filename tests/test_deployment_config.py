@@ -26,6 +26,7 @@ def test_single_web_service_runs_the_router_through_preflight():
     assert svc["buildCommand"] == "./scripts/render-build.sh"
     assert svc["startCommand"] == "./scripts/start.sh"
     assert svc["healthCheckPath"] == "/_stcore/health"
+    assert svc["branch"] == "main"
     start = (ROOT / "scripts" / "start.sh").read_text()
     assert os.access(ROOT / "scripts" / "start.sh", os.X_OK)
     assert start.index("python scripts/preflight.py") < start.index("exec streamlit run app.py")
