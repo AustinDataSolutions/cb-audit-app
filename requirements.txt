@@ -6,6 +6,7 @@ python-dotenv==1.2.1
 PyYAML==6.0.3
 streamlit==1.52.2
 streamlit_tree_select==0.0.5
+certifi>=2026.10.19
 
 # Shared accounts, sessions, usage events, About and Usage statistics pages (public repository), pinned
 # to a release tag. Bump deliberately: a release marked "Disclosure: affected" in the package CHANGELOG
