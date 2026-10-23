@@ -89,11 +89,56 @@ and usage events live on the disk and survive deploys and restarts.
 |---|---|
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Provider keys. Rotate by changing the value and redeploying. |
 | `ORGANIZATION`, `AUDIENCE` | Named in the prompts and the page title. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` | Email delivery. Blank `SMTP_HOST` switches the feature off. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` | Email delivery. Blank `SMTP_HOST` switches the feature off. The planned Brevo migration uses `smtp-relay.brevo.com`, port 587, the SMTP login and an SMTP key from Brevo's SMTP & API page, and a sender address verified in Brevo. See "Pending Brevo email migration" below. |
 | `DATA_DIR`, `AUTH_MODE` | `/var/data` and `required`; the Blueprint sets them. |
 | `USAGE_EXCLUDE_USERS` | Optional; accounts hidden from the statistics page by default. |
 
 Changing a value restarts the service.
+
+## Pending Brevo email migration
+
+The Audit app already supports sending a finished workbook through an SMTP
+service. The app has not yet been switched to Brevo in production. Once the
+Brevo account, sending domain, and SMTP settings are ready, "Email results to
+me" will send the finished workbook through Brevo's SMTP relay. The free plan
+allows 300 emails a day and adds a "Sent with Brevo" footer; the Audit app
+sends one message per emailed run, so the daily limit is not a practical
+concern.
+
+- **Sending domain:** authenticate `austindatasolutions.com` in Brevo
+  (Settings, Senders, Domains, IPs, Domains). The DNS records needed for that
+  step are described in `brevo-dns-instructions.md` in this folder.
+- **Sender:** when the domain is ready, create or verify the sender address in
+  Brevo. `EMAIL_FROM` must match that sender; Brevo refuses mail from any other
+  address.
+- **SMTP key:** generate an SMTP key on Brevo's SMTP & API page, name it after
+  this app, and set it as `SMTP_PASSWORD` on the service. Brevo can deactivate
+  a key that has not sent anything for 90 days; reactivate the key there if
+  email later stops working after a quiet period.
+- **Checking the connection:** after setting the Brevo values in Render, run
+  this from the Render Shell without printing the key:
+
+  ```bash
+  python - <<'EOF'
+  import os, smtplib, ssl
+  host, port = os.environ.get("SMTP_HOST", ""), int(os.environ.get("SMTP_PORT", "587"))
+  print("host:", host, "port:", port)
+  try:
+      with smtplib.SMTP(host, port, timeout=30) as s:
+          print("connected")
+          s.starttls(context=ssl.create_default_context()); print("encryption on")
+          s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASSWORD"]); print("login accepted")
+  except Exception as exc:
+      print("failed at the step after the last line above:", type(exc).__name__, str(exc)[:200])
+  EOF
+  ```
+
+  "login accepted" means the settings are right; a failure names the step
+  that broke (connection, encryption, or sign-in). A sign-in failure usually
+  means a wrong or deactivated key, or `SMTP_USER` set to the account's
+  sign-in email instead of the SMTP login shown on the SMTP & API page.
+- **Delivery log:** once email delivery is live, Brevo's Transactional, Logs
+  page shows each message and whether it was delivered, bounced, or refused.
 
 ## Local runs with accounts
 
