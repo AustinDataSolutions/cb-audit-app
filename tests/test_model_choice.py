@@ -112,18 +112,16 @@ def test_without_a_list_the_configured_name_stands():
 def test_the_configured_name_is_kept_when_it_is_the_newest_of_its_family():
     choice = choose_default_model("anthropic", "claude-opus-5-5", ANTHROPIC_LIST)
     assert (choice.model, choice.status) == ("claude-opus-5-5", CONFIGURED)
-    assert default_model_caption(choice, "anthropic") == "Default: the newest Opus model available to this key."
+    assert default_model_caption(choice, "anthropic") is None
     choice = choose_default_model("openai", "gpt-6.1-terra", OPENAI_LIST)
     assert (choice.model, choice.status) == ("gpt-6.1-terra", CONFIGURED)
-    assert default_model_caption(choice, "openai") == "Default: the newest Terra model available to this key."
+    assert default_model_caption(choice, "openai") is None
 
 
 def test_a_newer_model_of_the_family_replaces_a_listed_but_older_configured_name():
     choice = choose_default_model("anthropic", "claude-opus-4-8", ANTHROPIC_LIST)
     assert (choice.model, choice.configured, choice.status) == ("claude-opus-5-5", "claude-opus-4-8", NEWER)
-    assert default_model_caption(choice, "anthropic") == (
-        "Default updated: claude-opus-4-8 is configured, but claude-opus-5-5 is the newest Opus model "
-        "available to this key.")
+    assert default_model_caption(choice, "anthropic") is None       # just preselected, no note
     choice = choose_default_model("openai", "gpt-5.6-luna", OPENAI_LIST)
     assert (choice.model, choice.status) == ("gpt-6-luna", NEWER)
 
@@ -133,14 +131,14 @@ def test_a_configured_name_that_the_key_cannot_use_is_replaced_by_the_newest_of_
     choice = choose_default_model("anthropic", "claude-opus-4-8", listed)
     assert (choice.model, choice.status) == ("claude-opus-5-5", REPLACED)
     assert default_model_caption(choice, "anthropic") == (
-        "Default updated: claude-opus-4-8 is no longer in Anthropic's model list; claude-opus-5-5 is the "
-        "newest Opus model available to this key.")
+        "claude-opus-4-8 is no longer in Anthropic's model list; selected claude-opus-5-5.")
     # OpenAI retired gpt-5-nano; a key that no longer lists it gets the newest nano, not a luna
     # (the family is what the configured name says, so moving to terra is a config.yaml edit).
     listed = [m for m in OPENAI_LIST if not m.startswith("gpt-5-nano")]
     choice = choose_default_model("openai", "gpt-5-nano", listed)
     assert (choice.model, choice.status) == ("gpt-5.4-nano-2026-03-17", REPLACED)
-    assert "OpenAI's model list" in default_model_caption(choice, "openai")
+    assert default_model_caption(choice, "openai") == (
+        "gpt-5-nano is no longer in OpenAI's model list; selected gpt-5.4-nano-2026-03-17.")
 
 
 def test_a_configured_name_with_no_family_in_the_list_is_kept_and_flagged():
@@ -159,7 +157,7 @@ def test_a_configured_name_with_no_family_in_the_list_is_kept_and_flagged():
 def test_an_unparseable_configured_name_that_is_listed_is_simply_used():
     choice = choose_default_model("anthropic", "claude-test-model", ["claude-test-model", "claude-opus-5-5"])
     assert (choice.model, choice.status, choice.family) == ("claude-test-model", CONFIGURED, None)
-    assert default_model_caption(choice, "anthropic") == "Default: claude-test-model."
+    assert default_model_caption(choice, "anthropic") is None
 
 
 def test_switching_family_in_config_switches_the_rule():

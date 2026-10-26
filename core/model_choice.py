@@ -145,22 +145,15 @@ def choose_default_model(provider: str, configured: str, available) -> DefaultMo
 
 
 def default_model_caption(choice: DefaultModel, provider: str) -> Optional[str]:
-    """The sidebar's one-line explanation of the preselected model, or None when the list was not
-    fetched (the sidebar already warns about that)."""
+    """The sidebar's one-line note under the model picker, or None when there is nothing to say:
+    the newest model of the family is simply preselected, and a list that could not be fetched is
+    already warned about. A note appears only when the configured name is not in the list."""
     label = PROVIDER_LABELS.get(provider, provider)
     family = choice.family.capitalize() if choice.family else None
-    if choice.status == NO_LIST:
+    if choice.status in (NO_LIST, CONFIGURED, NEWER):
         return None
-    if choice.status == CONFIGURED:
-        if family:
-            return f"Default: the newest {family} model available to this key."
-        return f"Default: {choice.model}."
-    if choice.status == NEWER:
-        return (f"Default updated: {choice.configured} is configured, but {choice.model} is the newest "
-                f"{family} model available to this key.")
     if choice.status == REPLACED:
-        return (f"Default updated: {choice.configured} is no longer in {label}'s model list; "
-                f"{choice.model} is the newest {family} model available to this key.")
+        return f"{choice.configured} is no longer in {label}'s model list; selected {choice.model}."
     if family:
         return (f"{choice.configured} is not in {label}'s model list and no other {family} model is; "
                 f"choose a listed model if a run fails.")

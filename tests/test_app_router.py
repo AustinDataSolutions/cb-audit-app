@@ -114,7 +114,7 @@ def _model_picker(at):
     return next(s for s in at.sidebar.selectbox if s.label == "Model")
 
 
-def test_the_sidebar_preselects_the_newest_opus_model_and_says_so(data, monkeypatch):
+def test_the_sidebar_preselects_the_newest_opus_model_without_a_note(data, monkeypatch):
     import anthropic
     listed = ["claude-opus-4-8", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _FakeClient(listed))
@@ -122,7 +122,7 @@ def test_the_sidebar_preselects_the_newest_opus_model_and_says_so(data, monkeypa
     picker = _model_picker(at)
     assert picker.options == listed                                  # every listed model stays selectable
     assert picker.value == "claude-opus-5-5"
-    assert "Default: the newest Opus model available to this key." in [c.value for c in at.sidebar.caption]
+    assert not any("model list" in c.value for c in at.sidebar.caption)
 
 
 def test_the_sidebar_says_when_the_configured_default_was_replaced(data, monkeypatch):
@@ -131,8 +131,8 @@ def test_the_sidebar_says_when_the_configured_default_was_replaced(data, monkeyp
     at = _sign_in(_router(), "alice")
     picker = _model_picker(at)
     assert picker.options == ["claude-opus-4-8", "claude-opus-5"] and picker.value == "claude-opus-5"
-    assert ("Default updated: claude-opus-5-5 is no longer in Anthropic's model list; claude-opus-5 is the "
-            "newest Opus model available to this key.") in [c.value for c in at.sidebar.caption]
+    assert "claude-opus-5-5 is no longer in Anthropic's model list; selected claude-opus-5." in [
+        c.value for c in at.sidebar.caption]
 
 
 def test_the_sidebar_warns_instead_when_the_model_list_cannot_be_fetched(data, monkeypatch):
@@ -142,7 +142,7 @@ def test_the_sidebar_warns_instead_when_the_model_list_cannot_be_fetched(data, m
     picker = _model_picker(at)
     assert picker.options == ["claude-opus-5-5"] and picker.value == "claude-opus-5-5" and picker.disabled
     assert [w.value for w in at.sidebar.warning] == ["No models returned from provider."]
-    assert not any("Default" in c.value for c in at.sidebar.caption)
+    assert not any("model list" in c.value for c in at.sidebar.caption)
 
 
 def test_wrong_password_is_refused_and_recorded_without_revealing_the_app(data):

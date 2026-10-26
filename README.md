@@ -80,9 +80,9 @@ The model names are fallbacks. The sidebar asks the chosen provider for its
 model list and preselects the newest model of the same family as the configured
 name: the newest Opus model for Anthropic, the newest Terra model for OpenAI
 (the rule lives in `core/model_choice.py`). So the default keeps up with new
-releases without an edit here; a caption under the model picker says when the
-preselected model differs from the configured name. The configured name is used
-as-is only when the list cannot be fetched. Every listed model stays selectable.
+releases without an edit here; a short note under the model picker appears only
+when the configured name is no longer in the provider's list. The configured
+name is used as-is only when the list cannot be fetched. Every listed model stays selectable.
 To prefer another family, name a model of that family (for example
 `claude-sonnet-5-5`), and the rule follows it.
 
