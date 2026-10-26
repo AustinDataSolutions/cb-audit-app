@@ -27,7 +27,7 @@ class _FakeSMTP:
         self.started_tls = False
         self.login_args = None
         self.sent_message = None
-        _FakeSMTP.instances.append(self)
+        type(self).instances.append(self)
 
     def __enter__(self):
         return self
@@ -128,3 +128,83 @@ def test_invalid_recipient_raises_before_connecting(fake_smtp):
     with pytest.raises(audit_email.EmailConfigError):
         audit_email.send_audit_email(**_valid_kwargs(recipient="not-an-email"))
     assert fake_smtp.instances == []
+
+
+# ---------------------------------------------------------------------------
+# check_smtp_login / cached_smtp_check — the sign-in check behind "Confirm email address"
+# ---------------------------------------------------------------------------
+
+class _ScriptedSMTP(_FakeSMTP):
+    """A fake server that fails at a chosen step: 'connect', 'starttls', or 'login'."""
+
+    fail_at = None
+
+    def __init__(self, host, port, timeout=None):
+        if _ScriptedSMTP.fail_at == "connect":
+            raise OSError(111, "Connection refused")
+        super().__init__(host, port, timeout)
+
+    def starttls(self, context=None):
+        if _ScriptedSMTP.fail_at == "starttls":
+            raise audit_email.smtplib.SMTPNotSupportedError("STARTTLS extension not supported by server.")
+        super().starttls(context)
+
+    def login(self, user, password):
+        if _ScriptedSMTP.fail_at == "login":
+            raise audit_email.smtplib.SMTPAuthenticationError(535, b"5.7.8 Authentication failed")
+        super().login(user, password)
+
+
+@pytest.fixture
+def scripted_smtp(monkeypatch):
+    _ScriptedSMTP.instances = []
+    _ScriptedSMTP.fail_at = None
+    monkeypatch.setattr(audit_email.smtplib, "SMTP", _ScriptedSMTP)
+    audit_email.forget_smtp_checks()
+    yield _ScriptedSMTP
+    audit_email.forget_smtp_checks()
+
+
+_CHECK = dict(smtp_host="smtp.example.com", smtp_port=587, smtp_user="login@smtp.example.com", smtp_password="s3cret")
+
+
+def test_check_signs_in_without_sending(scripted_smtp):
+    assert audit_email.check_smtp_login(**_CHECK) is None
+    (server,) = scripted_smtp.instances
+    assert server.started_tls and server.login_args == ("login@smtp.example.com", "s3cret")
+    assert server.sent_message is None
+
+
+@pytest.mark.parametrize("step, phrase", [
+    ("connect", "could not reach the email server smtp.example.com:587"),
+    ("starttls", "did not accept an encrypted connection"),
+    ("login", "rejected the sign-in; the SMTP key may be wrong, expired, or deactivated"),
+])
+def test_check_names_the_failing_step_without_the_password(scripted_smtp, step, phrase):
+    scripted_smtp.fail_at = step
+    problem = audit_email.check_smtp_login(**_CHECK)
+    assert phrase in problem
+    assert "s3cret" not in problem
+
+
+def test_check_reports_missing_settings_before_connecting(scripted_smtp):
+    problem = audit_email.check_smtp_login(**{**_CHECK, "smtp_password": "", "smtp_host": ""})
+    assert problem == "the email settings on the server are incomplete (missing SMTP_HOST, SMTP_PASSWORD)"
+    assert scripted_smtp.instances == []
+
+
+def test_cached_check_remembers_the_result_until_it_ages_out(scripted_smtp):
+    clock = [1000.0]
+    kwargs = {**_CHECK, "now": lambda: clock[0], "max_age": 300}
+    scripted_smtp.fail_at = "login"
+    first = audit_email.cached_smtp_check(**kwargs)
+    assert "rejected the sign-in" in first
+    scripted_smtp.fail_at = None
+    assert audit_email.cached_smtp_check(**kwargs) == first      # remembered: the failure is not retried
+    assert len(scripted_smtp.instances) == 1
+    clock[0] += 301
+    assert audit_email.cached_smtp_check(**kwargs) is None        # aged out: checked again, now fine
+    assert len(scripted_smtp.instances) == 2
+    # Another server or login is its own entry.
+    assert audit_email.cached_smtp_check(**{**kwargs, "smtp_user": "other@smtp.example.com"}) is None
+    assert len(scripted_smtp.instances) == 3

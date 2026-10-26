@@ -139,6 +139,19 @@ if not getattr(st.file_uploader, "_test_wrapper", False):
 
     audit_email.send_audit_email = _fake_send
 
+    # The sign-in check behind "Confirm email address" answers locally too (TEST_EMAIL_CHECK_FAILS
+    # makes it report a rejected sign-in).
+    _real_check = audit_email.cached_smtp_check
+
+    def _fake_check(**kwargs):
+        if not _faking():
+            return _real_check(**kwargs)
+        if os.environ.get("TEST_EMAIL_CHECK_FAILS"):
+            return "the email server rejected the sign-in (test)"
+        return None
+
+    audit_email.cached_smtp_check = _fake_check
+
 # The fixture is already in the app's own layout, so skip the CX Designer export reformat (tested in
 # tests/test_validation.py and the audit engine tests) the way a resumed checkpoint does.
 if st.session_state.get("audit_source_name") == "dining_audit.xlsx":

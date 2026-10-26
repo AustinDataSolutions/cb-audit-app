@@ -115,8 +115,19 @@ not a practical concern.
   delete the old key in Brevo. Brevo deactivates a key that has not sent
   anything for 90 days; if email stops working after a quiet period, check the
   key's status there and reactivate it.
-- **Checking the connection:** after changing any of the values in Render, run
-  this from the Render Shell; it prints the progress and never the key:
+- **Automatic checks:** the app signs in to Brevo (without sending anything)
+  at two moments. At every start, `scripts/preflight.py` writes one line to
+  the Logs tab: `preflight: email delivery ok (...)`, or `preflight: WARNING
+  email delivery check failed: ...` followed by the reason; a failure never
+  stops the app from starting. And when someone clicks **Confirm email
+  address**, the same check runs; if it fails, the address is not confirmed
+  and the screen says why, with the option to run without email. The result
+  is remembered for five minutes, so a server that is down is not retried on
+  every click. Both checks report the server's own reply, which for a wrong or
+  deactivated key reads like `535 ... Authentication failed`.
+- **Checking the connection by hand:** after changing any of the values in
+  Render, run this from the Render Shell; it prints the progress and never
+  the key:
 
   ```bash
   python - <<'EOF'

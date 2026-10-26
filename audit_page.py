@@ -19,6 +19,7 @@ from audit_reformat import handle_audit_reformat
 from audit_validation import validate_audit_sentences_sheet
 from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL, _extract_model_root_info
 from audit_email import is_valid_email
+import audit_email
 import audit_worker
 from ads_auth.ui.gate import log, render_sidebar, require_login
 from core.config import load_settings
@@ -34,6 +35,23 @@ def _smtp_config():
 def _email_configured():
     """True when the settings needed to actually send mail are all present."""
     return settings.email_configured
+
+
+def _email_service_problem():
+    """Sign in to the email server the way the worker will, without sending anything.
+
+    Returns None when the server accepts the sign-in, otherwise a plain-English description of
+    what failed. The result is remembered for a few minutes (audit_email.cached_smtp_check), so
+    a second confirmation is instant and a server that is down is not retried on every click.
+    The same check runs at startup (scripts/preflight.py) and writes its result to the server log.
+    """
+    smtp = _smtp_config()
+    problem = audit_email.cached_smtp_check(
+        smtp_host=smtp["host"], smtp_port=smtp["port"], smtp_user=smtp["user"], smtp_password=smtp["password"],
+    )
+    if problem:
+        logger.warning("Email delivery check failed: %s", problem)
+    return problem
 
 
 # When the client (ORGANIZATION secret) is AARP, results should only go to
@@ -1140,6 +1158,17 @@ def main():
         if not is_valid_email(addr):
             st.session_state["email_confirm_error"] = "That doesn't look like a valid email address."
             return
+        # Catch a broken email service here, before the run, rather than after an hour's audit.
+        # (When the settings are missing altogether, the caption below already says so.)
+        if _email_configured():
+            problem = _email_service_problem()
+            if problem:
+                st.session_state["email_confirm_error"] = (
+                    f"Email sending isn't working right now: {problem}. Try again in a few minutes, "
+                    "or uncheck “Email results to me” to run the audit without email and download "
+                    "the result instead. If this keeps happening, tell the administrator."
+                )
+                return
         if _aarp_email_domain_warning(organization, addr):
             # Off an approved domain — soft block: require an explicit second
             # click before this address counts as confirmed.

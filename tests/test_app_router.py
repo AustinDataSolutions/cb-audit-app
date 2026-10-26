@@ -30,6 +30,7 @@ def data(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("RENDER", raising=False)
     monkeypatch.delenv("TEST_EMAIL_FAILS", raising=False)
+    monkeypatch.delenv("TEST_EMAIL_CHECK_FAILS", raising=False)
     monkeypatch.setenv("AUTH_MODE", "required")
     monkeypatch.setenv("TEST_FAKE_IO", "1")              # the smoke wrapper's fakes apply only while this is set
     data_dir = tmp_path / "data"
@@ -250,6 +251,22 @@ def test_a_run_without_email_and_a_failed_send_record_no_email_event(data, monke
     _run_audit(app)
     assert any("emailing the results failed" in w.value for w in app.warning)
     assert [e for u, e in _events(data) if u == "maria"] == ["upload_audit_file", "run_audit"]
+
+
+def test_an_address_is_not_confirmed_while_the_email_server_rejects_the_sign_in(data, monkeypatch):
+    monkeypatch.setenv("TEST_EMAIL_CHECK_FAILS", "1")
+    app = _signed_in_script(data, "alice")
+    app.text_input(key="email_results_address").input("alice@example.test")
+    _button(app, label="Confirm email address").click().run()
+    assert not app.exception, app.exception
+    assert any("Email sending isn't working right now: the email server rejected the sign-in (test)" in e.value
+               for e in app.error)
+    assert not any("Email address set" in c.value for c in app.caption)
+    assert "email_confirmed_address" not in app.session_state
+    # Running without email is still open to the user.
+    app.checkbox(key="email_results_enabled").uncheck().run()
+    _run_audit(app)
+    assert [e for _, e in _events(data)] == ["upload_audit_file", "run_audit"]
 
 
 def test_disabled_mode_records_nothing(data, monkeypatch):
