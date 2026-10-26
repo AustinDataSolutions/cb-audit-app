@@ -51,3 +51,33 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+
+  # Once a month, send one fixed sentence to KEEPALIVE_TO through the same email settings, so the
+  # provider's SMTP key is never idle for 90 days (Brevo deactivates idle keys). Billed by the second
+  # it runs, with Render's $1/month minimum. The job gets its own copy of the five email values;
+  # rotating the key means updating both services (docs/OPERATIONS.md, "Email delivery").
+  - type: cron
+    name: aarp-automatic-audit-email-keepalive
+    runtime: python
+    region: virginia
+    branch: main
+    plan: 0.5c-512mb
+    schedule: "0 14 1 * *"     # 14:00 UTC on the 1st of every month (morning in the US)
+    autoDeployTrigger: "off"
+    buildCommand: ./scripts/render-build.sh
+    startCommand: python scripts/email_keepalive.py
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: KEEPALIVE_TO
+        sync: false            # the address the monthly check is sent to (the app's owner)
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

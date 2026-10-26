@@ -111,8 +111,8 @@ not a practical concern.
   Brevo and the `EMAIL_FROM` value. The two must match; Brevo refuses mail
   from any other address.
 - **Rotating the SMTP key:** generate a new SMTP key on Brevo's SMTP & API
-  page, name it after this app, set it as `SMTP_PASSWORD` on the service, then
-  delete the old key in Brevo. Brevo deactivates a key that has not sent
+  page, name it after this app, set it as `SMTP_PASSWORD` on the web service
+  and on the keep-alive job (below), then delete the old key in Brevo. Brevo deactivates a key that has not sent
   anything for 90 days; if email stops working after a quiet period, check the
   key's status there and reactivate it.
 - **Automatic checks:** the app signs in to Brevo (without sending anything)
@@ -150,6 +150,34 @@ not a practical concern.
   sign-in email instead of the SMTP login shown on the SMTP & API page.
 - **Delivery log:** Brevo's Transactional, Logs page shows each message and
   whether it was delivered, bounced, or refused.
+
+### Monthly keep-alive job
+
+Brevo deactivates an SMTP key that has sent nothing for 90 days, and the app
+can easily go that long unused. The Render cron job
+`aarp-automatic-audit-email-keepalive` (declared in `render.yaml`) runs
+`scripts/email_keepalive.py` at 14:00 UTC on the 1st of every month. It sends
+one fixed sentence from `EMAIL_FROM` to `KEEPALIVE_TO` (the app's owner)
+through the same five email settings, and nothing else. Render bills the
+seconds it runs, with a $1/month minimum.
+
+- **Creating it** (once): in the Render dashboard open **Blueprints**, pick
+  the app's Blueprint, and click **Manual Sync** so Render reads the new
+  service from `render.yaml`. It asks for the values marked as dashboard
+  values: `KEEPALIVE_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`,
+  `EMAIL_FROM`. Type the same email values the web service has and the
+  owner's address for `KEEPALIVE_TO`. Then open the job and click **Trigger
+  Run**; its Logs tab should end with `keepalive: sent from ... to ...` and
+  the message should arrive within a minute.
+- **The signal:** the monthly email arriving. If it stops, the job's Logs
+  tab on Render shows `keepalive: FAILED ...` with the reason, and the app's
+  own startup and confirm-time checks report the same problem.
+- **Two copies of the email settings:** the job has its own copy of the five
+  values. When rotating the SMTP key, update `SMTP_PASSWORD` on both the web
+  service and the job (an environment group shared by both would make it one
+  place; not done, to keep the running web service untouched).
+- **Running it by hand:** `python scripts/email_keepalive.py` with the
+  settings in `.env` plus `KEEPALIVE_TO`, or **Trigger Run** on the job.
 
 ## Local runs with accounts
 

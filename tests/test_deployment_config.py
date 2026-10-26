@@ -10,14 +10,18 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _service():
+def _services():
     blueprint = yaml.safe_load((ROOT / "render.yaml").read_text())
     assert list(blueprint) == ["services"]
-    assert len(blueprint["services"]) == 1
-    return blueprint["services"][0]
+    return {svc["name"]: svc for svc in blueprint["services"]}
 
 
-def test_single_web_service_runs_the_router_through_preflight():
+def _service():
+    return _services()["aarp-automatic-audit"]
+
+
+def test_the_web_service_runs_the_router_through_preflight():
+    assert list(_services()) == ["aarp-automatic-audit", "aarp-automatic-audit-email-keepalive"]
     svc = _service()
     assert svc["name"] == "aarp-automatic-audit"
     assert svc["type"] == "web" and svc["runtime"] == "python"
@@ -52,6 +56,23 @@ def test_keys_and_mail_settings_are_dashboard_values_without_committed_secrets()
     plain = {"DATA_DIR", "AUTH_MODE", "PYTHONUNBUFFERED", "ORGANIZATION", "SMTP_PORT"}
     for e in env.values():
         assert "value" not in e or e["key"] in plain, e["key"]
+
+
+def test_keepalive_cron_job_sends_monthly_through_its_own_copy_of_the_email_settings():
+    job = _services()["aarp-automatic-audit-email-keepalive"]
+    assert job["type"] == "cron" and job["runtime"] == "python"
+    assert job["region"] == "virginia" and job["plan"] == "0.5c-512mb" and job["branch"] == "main"
+    assert job["schedule"] == "0 14 1 * *"
+    assert job["autoDeployTrigger"] == "off"
+    assert job["buildCommand"] == "./scripts/render-build.sh"
+    assert job["startCommand"] == "python scripts/email_keepalive.py"
+    assert "disk" not in job
+    env = {e["key"]: e for e in job["envVars"]}
+    for key in ("KEEPALIVE_TO", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"):
+        assert env[key] == {"key": key, "sync": False}, key
+    assert env["SMTP_PORT"] == {"key": "SMTP_PORT", "value": "587"}
+    assert set(env) == {"PYTHONUNBUFFERED", "KEEPALIVE_TO", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"}
+    assert os.access(ROOT / "scripts" / "email_keepalive.py", os.X_OK)
 
 
 def test_build_script_installs_requirements_and_never_touches_the_disk():
