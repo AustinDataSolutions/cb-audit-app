@@ -1,9 +1,14 @@
-# Preparing Brevo domain authentication for austindatasolutions.com
+# Brevo domain authentication for austindatasolutions.com
 
-Instructions for whoever manages the DNS records of austindatasolutions.com as
-part of the planned transition from SendGrid to Brevo. The Automatic Audit app
-has not yet been switched to Brevo in production. Brevo needs three or four
-DNS records on the domain before mail from it is trusted. Nothing about the
+Status: done. The domain was authenticated in Brevo on 2026-10-26, with the
+records added at GoDaddy. Keep this sheet for the day the records have to be
+added again, for example after a DNS provider change, or if Brevo ever shows
+the domain as "Not authenticated".
+
+Instructions for whoever manages the DNS records of austindatasolutions.com.
+The Automatic Audit app sends its "Email results to me" messages through Brevo
+instead of SendGrid. Brevo needs three or four DNS records on the domain
+before mail from it is trusted. Nothing about the
 existing mail setup changes: these records do not affect where incoming mail
 goes, and the SendGrid records can stay or go as you prefer.
 
