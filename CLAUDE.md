@@ -158,13 +158,32 @@ LLM calls have a 300s timeout (`DEFAULT_LLM_TIMEOUT`). Retryable errors (429,
 - `audit_output_bytes` / `audit_output_filename`: final or promoted partial
   output for download
 - `audit_is_partial`: whether the current output is incomplete
+- `audit_last_run`: when the last run finished, how it ended, and the email
+  outcome, written by `_finalize_job_into_session` and shown as a status line
+  above the final download button. Session state survives a visit to the About
+  or Usage statistics page (widget state does not), so the line is still there
+  on return; a new upload clears it with the output.
 - `auth_*`: the package's session keys (user id, session version, sign-in time);
   sign-out clears the whole session state, uploads and results included.
+- `auth_pending_page`: the package's record of a sidebar page link clicked while
+  the screen had inputs to lose (see "Leaving the audit screen").
 
 Live progress, the latest checkpoint bytes, the stop signal, and email status
 all live on the `AuditJob` (not session_state). Within `run_audit`, checkpoints
 are still written every `CHECKPOINT_INTERVAL` categories, on the last category,
 and on retry/stop/error.
+
+### Leaving the audit screen
+Streamlit drops widget state (uploads, edited prompts, the typed email address)
+when the user opens another page. The audit page passes
+`confirm_leave=_has_unsaved_inputs` to the package's `render_sidebar`: while an
+audit file or model tree is uploaded (widget keys `audit_upload`,
+`model_tree_upload`) or the audit prompt, model notes, or summary prompt differ
+from `prompts.yaml` (keys `audit_prompt`, `model_info`, `summary_prompt`), the
+sidebar's page links become buttons and `confirm_navigation` opens a "Leave this
+page?" dialog with `LEAVE_MESSAGE`, Go back, and Proceed (`st.switch_page`).
+Both pieces live in `ads_auth.ui.gate` (v1.1.3); only the check and the wording
+are this app's.
 
 ### Run ownership (single active run)
 The `JobRegistry` is process-global and allows **one active audit at a time**

@@ -144,6 +144,7 @@ class JobSnapshot:
     warnings: tuple
     email_status: Optional[str]
     started_at: float
+    finished_at: Optional[float]      # wall-clock time the run reached a terminal status
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,7 @@ class AuditJob:
         self.run_id = run_id
         self.params = params
         self.started_at = time.time()  # wall-clock launch time, for UI "running for N min"
+        self.finished_at: Optional[float] = None  # set with the terminal status
         self._lock = threading.Lock()
         self.stop_event = threading.Event()  # UI-written; threading.Event is thread-safe
         self.thread: Optional[threading.Thread] = None
@@ -228,6 +230,7 @@ class AuditJob:
     def set_done(self):
         with self._lock:
             self.status = JobStatus.DONE
+            self.finished_at = time.time()
 
     def set_stopped(self):
         """Promote the latest checkpoint to the (partial) output and mark stopped."""
@@ -237,6 +240,7 @@ class AuditJob:
                 self.output_filename = self.params.checkpoint_filename
                 self.is_partial = True
             self.status = JobStatus.STOPPED
+            self.finished_at = time.time()
 
     def set_error(self, exc: BaseException):
         with self._lock:
@@ -249,6 +253,7 @@ class AuditJob:
                 self.output_filename = self.params.checkpoint_filename
                 self.is_partial = True
             self.status = JobStatus.ERROR
+            self.finished_at = time.time()
 
     def set_summary_error(self, exc: BaseException):
         """Record a failed summary phase without failing the whole run.
@@ -286,6 +291,7 @@ class AuditJob:
                 warnings=tuple(self.warnings),
                 email_status=self.email_status,
                 started_at=self.started_at,
+                finished_at=self.finished_at,
             )
 
     def is_terminal(self) -> bool:

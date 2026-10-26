@@ -7,6 +7,7 @@ records the five actions this app declares in `core/config.py` at the place each
 import logging
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import re
 from io import BytesIO
 import streamlit as st
@@ -21,7 +22,7 @@ from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTE
 from audit_email import is_valid_email
 import audit_email
 import audit_worker
-from ads_auth.ui.gate import log, render_sidebar, require_login
+from ads_auth.ui.gate import confirm_navigation, log, render_sidebar, require_login
 from core.config import load_settings
 
 logger = logging.getLogger(__name__)
@@ -166,18 +167,6 @@ def _validate_api_key(llm_provider, api_key):
 def get_org_and_audience():
     return settings.organization, settings.audience
 
-# Sign-in and the sidebar's account block come from the shared ads_auth package. `settings` shares the
-# page registry app.py filled, so the sidebar links resolve. With AUTH_MODE=disabled (local runs, test
-# wrappers that run this script without the router) the gate returns a local principal and records nothing.
-settings = load_settings()
-user = require_login(st, settings)
-render_sidebar(st, settings, user, show_reports=user.has_role("manager"))
-
-
-def log_usage(event: str) -> None:
-    """Record one usage event for the signed-in account: time, account name, event type. Never content."""
-    log(settings, event, user)
-
 def _load_summary_prompt(prompts_path):
     try:
         with open(prompts_path, "r") as f:
@@ -197,6 +186,45 @@ def _load_audit_defaults(prompts_path):
         }
     except Exception:
         return {"audit_prompt": "", "model_info": ""}
+
+
+PROMPTS_PATH = os.path.join(os.path.dirname(__file__), "prompts.yaml")
+
+# Keys of the widgets whose contents a page change would discard. The uploaders' keys hold the
+# uploaded file (None once it is removed); the text areas' keys hold their current text.
+UPLOAD_KEYS = ("audit_upload", "model_tree_upload")
+PROMPT_KEYS = ("audit_prompt", "model_info", "summary_prompt")
+
+LEAVE_MESSAGE = (
+    "Leaving this page will clear all inputs, including any uploaded files and custom prompts. "
+    "In-progress audits will continue, and completed audits will continue to be available for download."
+)
+
+
+def _has_unsaved_inputs():
+    """True while the screen holds something a page change would discard: an uploaded audit file or
+    model tree, or an audit prompt, model notes, or summary prompt that differ from their defaults."""
+    state = st.session_state
+    if any(state.get(key) is not None for key in UPLOAD_KEYS):
+        return True
+    defaults = _load_audit_defaults(PROMPTS_PATH)
+    defaults["summary_prompt"] = _load_summary_prompt(PROMPTS_PATH)
+    return any(key in state and (state[key] or "") != (defaults[key] or "") for key in PROMPT_KEYS)
+
+
+# Sign-in and the sidebar's account block come from the shared ads_auth package. `settings` shares the
+# page registry app.py filled, so the sidebar links resolve. With AUTH_MODE=disabled (local runs, test
+# wrappers that run this script without the router) the gate returns a local principal and records nothing.
+# While there are inputs to lose, the sidebar's page links ask first (confirm_navigation draws the dialog).
+settings = load_settings()
+user = require_login(st, settings)
+render_sidebar(st, settings, user, show_reports=user.has_role("manager"), confirm_leave=_has_unsaved_inputs)
+confirm_navigation(st, settings, LEAVE_MESSAGE)
+
+
+def log_usage(event: str) -> None:
+    """Record one usage event for the signed-in account: time, account name, event type. Never content."""
+    log(settings, event, user)
 
 
 def _load_app_defaults(config_path):
@@ -541,6 +569,51 @@ def _parse_model_xml(xml_bytes):
 
     return model_data
 
+DISPLAY_TZ = ZoneInfo("America/New_York")
+
+
+def _last_run_record(snap):
+    """What the status line needs from a finished job, as plain values that live in session_state."""
+    if snap.status == audit_worker.JobStatus.DONE:
+        if snap.summary_error:
+            outcome = "completed, but the summary could not be generated"
+        elif snap.is_partial:
+            outcome = "completed; the summary was stopped"
+        else:
+            outcome = "completed"
+    elif snap.status == audit_worker.JobStatus.STOPPED:
+        outcome = "stopped"
+    else:
+        outcome = "errored"
+    return {
+        "finished_at": snap.finished_at or time.time(),
+        "outcome": outcome,
+        "has_output": bool(snap.output_bytes),
+        "email_status": snap.email_status or "",
+    }
+
+
+def _describe_email_outcome(email_status):
+    kind, _, detail = (email_status or "").partition(":")
+    if kind == "sent":
+        return f"Results were emailed to {detail}."
+    if kind == "failed":
+        return f"Emailing the results failed ({detail})."
+    if kind == "skipped" and detail and not detail.startswith("not enabled"):
+        return f"Results were not emailed ({detail})."
+    return "Email was not requested."
+
+
+def _describe_last_run(last_run):
+    """One line for the screen: when the last run finished, how it ended, and what happened to the email."""
+    when = datetime.fromtimestamp(last_run["finished_at"], DISPLAY_TZ).strftime("%b %-d, %Y at %-I:%M %p")
+    outcome = last_run["outcome"]
+    if outcome in ("stopped", "errored"):
+        results = "partial results are available below" if last_run.get("has_output") else "no results file was produced"
+        outcome = f"{outcome}; {results}"
+    return f"**Last run** finished {when} Eastern — audit {outcome}. {_describe_email_outcome(last_run.get('email_status'))}"
+
+
 def get_api_key(provider="ANTHROPIC"):
     """The configured key for the provider (environment variable on the server), or None."""
     return settings.api_key(provider) or None
@@ -644,6 +717,7 @@ def main():
     uploaded_audit = st.file_uploader(
         "To start, upload an audit file generated by CX Designer, or an audit checkpoint generated by this app.",
         type=["xlsx"],
+        key="audit_upload",
     )
 
     if uploaded_audit:
@@ -653,6 +727,7 @@ def main():
             st.session_state.pop("reformatted_audit_bytes", None)
             st.session_state.pop("audit_output_bytes", None)
             st.session_state.pop("audit_is_partial", None)
+            st.session_state.pop("audit_last_run", None)
             st.session_state.pop("partial_audit_detection", None)
             st.session_state["warnings_acknowledged"] = False
             st.session_state["warnings_confirmation_needed"] = False
@@ -718,9 +793,10 @@ def main():
     model_tree = st.file_uploader(
         "Upload the model tree to select particular topics to audit, and provide the LLM with category descriptions that can improve its judgment. (Optional)",
         type=["xml"],
+        key="model_tree_upload",
     )
 
-    prompts_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
+    prompts_path = PROMPTS_PATH
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     audit_defaults = _load_audit_defaults(prompts_path)
     app_defaults = _load_app_defaults(config_path)
@@ -849,6 +925,7 @@ def main():
             "About this model: (optional)",
             max_chars=1000,
             value=audit_defaults["model_info"],
+            key="model_info",
             help="Tell the LLM about anything unique to this model, or the feedback it targets, so that it can make informed decisions.",
             placeholder=f"This model categorizes feedback about the {organization} loyalty program..."
         )
@@ -857,6 +934,7 @@ def main():
         audit_prompt = st.text_area(
             label="Task instructions:",
             value=audit_defaults["audit_prompt"],
+            key="audit_prompt",
             max_chars=2500,
             placeholder="Tell the LLM what to do...",
             help="The prompt is sent to the LLM once per category. Use {category} to refer to the category name, and {description} to refer to the category's description.",
@@ -1444,6 +1522,7 @@ def main():
             st.session_state["audit_output_bytes"] = snap.output_bytes
             st.session_state["audit_output_filename"] = snap.output_filename
             st.session_state["audit_is_partial"] = snap.is_partial
+            st.session_state["audit_last_run"] = _last_run_record(snap)
             st.session_state["finalized_run_id"] = job.run_id
         st.session_state.pop("active_run_id", None)
         if "run" in st.query_params:
@@ -1536,6 +1615,12 @@ def main():
                 help=run_help,
                 on_click=_queue_audit_run_with_warning_check,
             )
+
+    # Last run's status — kept in session_state, so it is still here after a visit to another page,
+    # and cleared with the output when a new file is uploaded.
+    last_run = st.session_state.get("audit_last_run")
+    if last_run and registry.active() is None:
+        st.info(_describe_last_run(last_run))
 
     # Final download — shown once a job has finished and been finalized.
     audit_output_bytes = st.session_state.get("audit_output_bytes")

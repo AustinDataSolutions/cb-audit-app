@@ -68,11 +68,14 @@ class Upload(io.BytesIO):
 
 
 def _file_uploader(label, *args, **kwargs):
+    upload = None
     if "audit file" in label:
-        return None if st.session_state.get("test_no_audit") else Upload(AUDIT_BYTES, "dining_audit.xlsx")
-    if "model tree" in label:
-        return Upload(MODEL_XML, "dining_model.xml") if st.session_state.get("test_model_tree") else None
-    return None
+        upload = None if st.session_state.get("test_no_audit") else Upload(AUDIT_BYTES, "dining_audit.xlsx")
+    elif "model tree" in label:
+        upload = Upload(MODEL_XML, "dining_model.xml") if st.session_state.get("test_model_tree") else None
+    if kwargs.get("key"):
+        st.session_state[kwargs["key"]] = upload      # the real widget keeps its value under its key
+    return upload
 
 
 if not getattr(st.file_uploader, "_test_wrapper", False):
