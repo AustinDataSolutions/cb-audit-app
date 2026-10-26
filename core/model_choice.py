@@ -14,7 +14,7 @@ The rule: the newest model in the same family as the configured name.
   key can use, and a future ``claude-opus-6`` is chosen the day it appears in the list.
 - OpenAI ids read ``gpt-<major>[.<minor>]-<family>[-<yyyy-mm-dd>]``. The family is the tier word
   after the version: ``astra``, ``sol``, ``terra``, ``luna`` (formerly ``mini``, ``nano``). With
-  ``gpt-6-luna`` configured, the default is the newest Luna model.
+  ``gpt-6.1-terra`` configured, the default is the newest Terra model.
 
 "Newest" means the highest version number, then an undated alias over a dated snapshot of the same
 version. Ids that do not fit the grammar are never chosen as a default but stay in the list for the

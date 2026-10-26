@@ -685,7 +685,7 @@ def test_anthropic_response_text_skips_thinking_blocks(audit_module):
         audit_module._anthropic_response_text(SimpleNamespace(content=[]))
 
 
-def test_fallback_model_names_are_an_opus_and_a_luna(audit_module):
+def test_fallback_model_names_are_an_opus_and_a_terra(audit_module):
     from core.model_choice import parse_anthropic_model, parse_openai_model
     assert parse_anthropic_model(audit_module.DEFAULT_ANTHROPIC_MODEL).family == "opus"
-    assert parse_openai_model(audit_module.DEFAULT_OPENAI_MODEL).family == "luna"
+    assert parse_openai_model(audit_module.DEFAULT_OPENAI_MODEL).family == "terra"

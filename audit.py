@@ -30,7 +30,7 @@ except ImportError:  # Optional dependency
 DEFAULT_MAX_CATEGORIES = 1000
 DEFAULT_MAX_SENTENCES_PER_CATEGORY = 51
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
-DEFAULT_OPENAI_MODEL = "gpt-6-luna"
+DEFAULT_OPENAI_MODEL = "gpt-6.1-terra"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
 # Save a checkpoint every Nth completed category instead of after every one.

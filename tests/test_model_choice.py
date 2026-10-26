@@ -113,9 +113,9 @@ def test_the_configured_name_is_kept_when_it_is_the_newest_of_its_family():
     choice = choose_default_model("anthropic", "claude-opus-5-5", ANTHROPIC_LIST)
     assert (choice.model, choice.status) == ("claude-opus-5-5", CONFIGURED)
     assert default_model_caption(choice, "anthropic") == "Default: the newest Opus model available to this key."
-    choice = choose_default_model("openai", "gpt-6-luna", OPENAI_LIST)
-    assert (choice.model, choice.status) == ("gpt-6-luna", CONFIGURED)
-    assert default_model_caption(choice, "openai") == "Default: the newest Luna model available to this key."
+    choice = choose_default_model("openai", "gpt-6.1-terra", OPENAI_LIST)
+    assert (choice.model, choice.status) == ("gpt-6.1-terra", CONFIGURED)
+    assert default_model_caption(choice, "openai") == "Default: the newest Terra model available to this key."
 
 
 def test_a_newer_model_of_the_family_replaces_a_listed_but_older_configured_name():
@@ -136,7 +136,7 @@ def test_a_configured_name_that_the_key_cannot_use_is_replaced_by_the_newest_of_
         "Default updated: claude-opus-4-8 is no longer in Anthropic's model list; claude-opus-5-5 is the "
         "newest Opus model available to this key.")
     # OpenAI retired gpt-5-nano; a key that no longer lists it gets the newest nano, not a luna
-    # (the family is what the configured name says, so moving to luna is a config.yaml edit).
+    # (the family is what the configured name says, so moving to terra is a config.yaml edit).
     listed = [m for m in OPENAI_LIST if not m.startswith("gpt-5-nano")]
     choice = choose_default_model("openai", "gpt-5-nano", listed)
     assert (choice.model, choice.status) == ("gpt-5.4-nano-2026-03-17", REPLACED)

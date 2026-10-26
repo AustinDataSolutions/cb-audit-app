@@ -27,7 +27,7 @@ except ImportError:  # Optional dependency
 
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
-DEFAULT_OPENAI_MODEL = "gpt-6-luna"
+DEFAULT_OPENAI_MODEL = "gpt-6.1-terra"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call

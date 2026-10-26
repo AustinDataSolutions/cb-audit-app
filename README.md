@@ -71,14 +71,14 @@ git-ignored `.env`; `.env.example` lists them:
 app_defaults:
   llm_provider: "anthropic"
   model_name_anthropic: "claude-opus-5-5"
-  model_name_openai: "gpt-6-luna"
+  model_name_openai: "gpt-6.1-terra"
   max_categories: 500
   max_sentences_per_category: 300
   max_tokens: 10000
 ```
 The model names are fallbacks. The sidebar asks the chosen provider for its
 model list and preselects the newest model of the same family as the configured
-name: the newest Opus model for Anthropic, the newest Luna model for OpenAI
+name: the newest Opus model for Anthropic, the newest Terra model for OpenAI
 (the rule lives in `core/model_choice.py`). So the default keeps up with new
 releases without an edit here; a caption under the model picker says when the
 preselected model differs from the configured name. The configured name is used

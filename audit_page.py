@@ -238,7 +238,7 @@ def _load_app_defaults(config_path):
     defaults = {
         "llm_provider": "anthropic",
         "model_name_anthropic": "claude-opus-5-5",
-        "model_name_openai": "gpt-6-luna",
+        "model_name_openai": "gpt-6.1-terra",
         "max_categories": 1000,
         "max_sentences_per_category": 1001,
         "max_tokens": 10000,

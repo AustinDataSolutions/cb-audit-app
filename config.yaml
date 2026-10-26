@@ -1,11 +1,11 @@
 app_defaults:
   llm_provider: "anthropic"
   # Fallback model names. When the provider's model list can be fetched, the sidebar preselects the
-  # newest model of the same family as the name here (Opus for Anthropic, Luna for OpenAI; the rule is
+  # newest model of the same family as the name here (Opus for Anthropic, Terra for OpenAI; the rule is
   # in core/model_choice.py). These names are used as-is only when the list is unavailable. To change
   # the family, name a model of that family here (say "claude-sonnet-5-5").
   model_name_anthropic: "claude-opus-5-5"
-  model_name_openai: "gpt-6-luna"
+  model_name_openai: "gpt-6.1-terra"
   max_categories: 500
   max_sentences_per_category: 300
   max_tokens: 10000
