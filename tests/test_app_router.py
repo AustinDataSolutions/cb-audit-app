@@ -9,6 +9,7 @@ runs check what the status line says after a finished run.
 """
 import io
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -104,10 +105,44 @@ def test_sign_in_shows_the_audit_screen_with_the_account_sidebar(data, monkeypat
 
 
 class _FakeClient:
-    class models:
-        @staticmethod
-        def list():
-            return []
+    """A provider client whose model list is whatever the test says (empty unless given)."""
+    def __init__(self, models=()):
+        self.models = types.SimpleNamespace(list=lambda: [types.SimpleNamespace(id=m) for m in models])
+
+
+def _model_picker(at):
+    return next(s for s in at.sidebar.selectbox if s.label == "Model")
+
+
+def test_the_sidebar_preselects_the_newest_opus_model_and_says_so(data, monkeypatch):
+    import anthropic
+    listed = ["claude-opus-4-8", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _FakeClient(listed))
+    at = _sign_in(_router(), "alice")
+    picker = _model_picker(at)
+    assert picker.options == listed                                  # every listed model stays selectable
+    assert picker.value == "claude-opus-5-5"
+    assert "Default: the newest Opus model available to this key." in [c.value for c in at.sidebar.caption]
+
+
+def test_the_sidebar_says_when_the_configured_default_was_replaced(data, monkeypatch):
+    import anthropic
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _FakeClient(["claude-opus-4-8", "claude-opus-5"]))
+    at = _sign_in(_router(), "alice")
+    picker = _model_picker(at)
+    assert picker.options == ["claude-opus-4-8", "claude-opus-5"] and picker.value == "claude-opus-5"
+    assert ("Default updated: claude-opus-5-5 is no longer in Anthropic's model list; claude-opus-5 is the "
+            "newest Opus model available to this key.") in [c.value for c in at.sidebar.caption]
+
+
+def test_the_sidebar_warns_instead_when_the_model_list_cannot_be_fetched(data, monkeypatch):
+    import anthropic
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _FakeClient())
+    at = _sign_in(_router(), "alice")
+    picker = _model_picker(at)
+    assert picker.options == ["claude-opus-5-5"] and picker.value == "claude-opus-5-5" and picker.disabled
+    assert [w.value for w in at.sidebar.warning] == ["No models returned from provider."]
+    assert not any("Default" in c.value for c in at.sidebar.caption)
 
 
 def test_wrong_password_is_refused_and_recorded_without_revealing_the_app(data):

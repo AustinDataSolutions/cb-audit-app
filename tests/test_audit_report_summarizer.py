@@ -190,3 +190,29 @@ class TestSummarizeAuditReport:
         headers = [cell.value for cell in ws[1]]
         assert "Issues" in headers
         wb.close()
+
+
+# ===========================================================================
+# _anthropic_response_text: the answer sits after any thinking block
+# ===========================================================================
+
+class TestAnthropicResponseText:
+    def test_the_first_text_block_is_the_answer_even_after_thinking(self):
+        from types import SimpleNamespace
+        message = SimpleNamespace(content=[
+            SimpleNamespace(type="thinking", thinking=""),
+            SimpleNamespace(type="text", text="SUMMARY: first"),
+            SimpleNamespace(type="text", text="second"),
+        ])
+        assert summarizer._anthropic_response_text(message) == "SUMMARY: first"
+
+    def test_blocks_without_a_type_count_as_text(self):
+        from types import SimpleNamespace
+        assert summarizer._anthropic_response_text(SimpleNamespace(content=[SimpleNamespace(text="plain")])) == "plain"
+
+    def test_a_response_without_text_is_an_error(self):
+        from types import SimpleNamespace
+        with pytest.raises(ValueError):
+            summarizer._anthropic_response_text(SimpleNamespace(content=[SimpleNamespace(type="thinking", thinking="")]))
+        with pytest.raises(ValueError):
+            summarizer._anthropic_response_text(SimpleNamespace(content=[]))

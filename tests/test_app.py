@@ -293,3 +293,72 @@ class TestFilenameReplacements:
         partial = filename.replace("_completed", "_partial")
         # No change if _completed not present
         assert partial == "raw_audit.xlsx"
+
+
+# ===========================================================================
+# _get_model_options / _load_app_defaults: the sidebar's model list and preselected default
+# ===========================================================================
+
+class TestGetModelOptions:
+    def test_without_a_key_the_configured_name_is_the_only_option(self):
+        app = _load_app_module()
+        options, enabled, error, choice = app._get_model_options("anthropic", "", "claude-opus-5-5")
+        assert options == ["claude-opus-5-5"] and not enabled and error == "No API key found."
+        assert (choice.model, choice.status) == ("claude-opus-5-5", "no_list")
+
+    def test_a_failed_fetch_keeps_the_configured_name_and_reports_the_error(self):
+        app = _load_app_module()
+        with patch.object(app, "_fetch_anthropic_models", return_value=(None, RuntimeError("boom"))):
+            options, enabled, error, choice = app._get_model_options("anthropic", "key", "claude-opus-5-5")
+        assert options == ["claude-opus-5-5"] and not enabled and error == "boom"
+        assert (choice.model, choice.status) == ("claude-opus-5-5", "no_list")
+        with patch.object(app, "_fetch_openai_models", return_value=([], None)):
+            options, enabled, error, choice = app._get_model_options("openai", "key", "gpt-6-luna")
+        assert options == ["gpt-6-luna"] and not enabled and error == "No models returned from provider."
+        assert choice.status == "no_list"
+
+    def test_the_list_is_deduplicated_and_the_newest_opus_is_preselected(self):
+        app = _load_app_module()
+        listed = ["claude-opus-4-8", "claude-opus-5-5", "claude-opus-4-8", "claude-fable-5-1", "claude-sonnet-5-5"]
+        with patch.object(app, "_fetch_anthropic_models", return_value=(listed, None)):
+            options, enabled, error, choice = app._get_model_options("anthropic", "key", "claude-opus-4-8")
+        assert options == ["claude-opus-4-8", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"]
+        assert enabled and error is None
+        assert (choice.model, choice.configured, choice.status) == ("claude-opus-5-5", "claude-opus-4-8", "newer")
+
+    def test_openai_preselects_the_newest_luna(self):
+        app = _load_app_module()
+        listed = ["gpt-5-nano", "gpt-6-luna", "gpt-6.1-sol", "o3"]
+        with patch.object(app, "_fetch_openai_models", return_value=(listed, None)):
+            options, enabled, error, choice = app._get_model_options("openai", "key", "gpt-6-luna")
+        assert options == listed and enabled
+        assert (choice.model, choice.status) == ("gpt-6-luna", "configured")
+
+    def test_a_missing_configured_name_is_added_only_when_nothing_comparable_is_listed(self):
+        app = _load_app_module()
+        with patch.object(app, "_fetch_anthropic_models", return_value=(["claude-opus-5-5", "claude-sonnet-5-5"], None)):
+            options, _, _, choice = app._get_model_options("anthropic", "key", "claude-opus-4-8")
+        assert options == ["claude-opus-5-5", "claude-sonnet-5-5"]           # the retired name is not offered
+        assert (choice.model, choice.status) == ("claude-opus-5-5", "replaced")
+        with patch.object(app, "_fetch_anthropic_models", return_value=(["claude-sonnet-5-5"], None)):
+            options, _, _, choice = app._get_model_options("anthropic", "key", "claude-opus-4-8")
+        assert options == ["claude-opus-4-8", "claude-sonnet-5-5"]           # kept selectable, as before
+        assert (choice.model, choice.status) == ("claude-opus-4-8", "unlisted")
+
+
+class TestLoadAppDefaults:
+    def test_an_unreadable_config_falls_back_to_current_model_names(self, tmp_path):
+        from core.model_choice import parse_anthropic_model, parse_openai_model
+        app = _load_app_module()
+        defaults = app._load_app_defaults(str(tmp_path / "missing.yaml"))
+        assert parse_anthropic_model(defaults["model_name_anthropic"]).family == "opus"
+        assert parse_openai_model(defaults["model_name_openai"]).family == "luna"
+
+    def test_the_repository_config_names_an_opus_and_a_luna_model(self):
+        """The rule follows the family of the configured name, so config.yaml must keep naming the
+        families the README promises (Opus for Anthropic, Luna for OpenAI)."""
+        from core.model_choice import parse_anthropic_model, parse_openai_model
+        app = _load_app_module()
+        defaults = app._load_app_defaults(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
+        assert parse_anthropic_model(defaults["model_name_anthropic"]).family == "opus"
+        assert parse_openai_model(defaults["model_name_openai"]).family == "luna"

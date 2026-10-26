@@ -669,3 +669,23 @@ class TestFormatCategoriesSelected:
 
     def test_subset(self):
         assert audit._format_categories_selected(["A", "B"], 2, 100) == "2 of 100"
+
+
+# ===========================================================================
+# _anthropic_response_text (the CLI's non-streaming call): text after any thinking block
+# ===========================================================================
+
+def test_anthropic_response_text_skips_thinking_blocks(audit_module):
+    from types import SimpleNamespace
+    message = SimpleNamespace(content=[SimpleNamespace(type="thinking", thinking=""),
+                                       SimpleNamespace(type="text", text="ID: 1 - Judgment: YES")])
+    assert audit_module._anthropic_response_text(message) == "ID: 1 - Judgment: YES"
+    assert audit_module._anthropic_response_text(SimpleNamespace(content=[SimpleNamespace(text="t")])) == "t"
+    with pytest.raises(ValueError):
+        audit_module._anthropic_response_text(SimpleNamespace(content=[]))
+
+
+def test_fallback_model_names_are_an_opus_and_a_luna(audit_module):
+    from core.model_choice import parse_anthropic_model, parse_openai_model
+    assert parse_anthropic_model(audit_module.DEFAULT_ANTHROPIC_MODEL).family == "opus"
+    assert parse_openai_model(audit_module.DEFAULT_OPENAI_MODEL).family == "luna"

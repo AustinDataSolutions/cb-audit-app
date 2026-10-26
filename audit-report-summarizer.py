@@ -26,8 +26,8 @@ except ImportError:  # Optional dependency
     OpenAI = None
 
 
-DEFAULT_MODEL = "claude-sonnet-4-5"
-DEFAULT_OPENAI_MODEL = "gpt-5-nano"
+DEFAULT_MODEL = "claude-sonnet-5-5"
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_ACCURACY_THRESHOLD = 0.80
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
@@ -36,6 +36,15 @@ _LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
 # Lets httpx time out and tear down cleanly on its own first; the watchdog only
 # fires when httpx fails to (e.g. a stalled streaming response that never gaps).
 _LLM_WATCHDOG_GRACE = 30  # seconds
+
+
+def _anthropic_response_text(message):
+    """The answer in a non-streaming Anthropic response. Models that think put a thinking block
+    before the text, so the first text block is the answer, not `content[0]`."""
+    for block in getattr(message, "content", None) or []:
+        if getattr(block, "type", "text") == "text" and hasattr(block, "text"):
+            return block.text
+    raise ValueError("The model returned no text.")
 
 
 def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
@@ -280,7 +289,7 @@ def _collect_summary_records(
                         ],
                         timeout=httpx.Timeout(DEFAULT_LLM_TIMEOUT, connect=30.0),
                     )
-                    return message.content[0].text
+                    return _anthropic_response_text(message)
                 elif llm_provider == "openai":
                     response = client.chat.completions.create(
                         model=model_name,

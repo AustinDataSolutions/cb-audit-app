@@ -23,7 +23,10 @@ Everything is an environment variable (`core/config.py` documents the names). On
 Render they are set on the service; locally a git-ignored `.env` is loaded
 (`.env.example` lists them). Streamlit secrets are not used; there is no shared
 password. `config.yaml` holds default provider/model and limits; `prompts.yaml`
-holds the audit and summary prompt templates.
+holds the audit and summary prompt templates. The model names in `config.yaml`
+are fallbacks: the sidebar preselects the newest model of that family from the
+provider's live list (`core/model_choice.py`), so bumping them is only needed
+when a family is renamed or retired.
 
 ## Governing documents
 - `DATA_HANDLING.md`: the disclosure users read inside the app (About page). It
@@ -110,6 +113,7 @@ a fake provider client, an instant fake run, and a fake mailer.
 | `app.py` | Router: `st.navigation` over the audit screen (file page) and the package's About and Usage statistics pages; prepares the database and the housekeeping thread once per process |
 | `audit_page.py` | Streamlit UI: sign-in gate and account sidebar (from `ads_auth`), launches/polls the background job, renders progress + downloads, logs usage events |
 | `core/config.py` | `Settings` (extends `ads_auth.AppSettings`): app name, title, events, provider keys, SMTP values, organization and audience, all from the environment |
+| `core/model_choice.py` | The default-model rule: from the provider's model list, the newest model of the same family as the `config.yaml` name (Opus, Luna); the configured name is the fallback when the list is unavailable. Pure functions, tested with fake lists |
 | `manage.py`, `scripts/preflight.py` | Wrappers around `ads_auth.cli` and `ads_auth.preflight` with this app's settings |
 | `audit_worker.py` | Background execution: `JobRegistry` (process-global), `AuditJob`, `_run_pipeline` (audit→summary→email) |
 | `audit.py` | Core audit engine (`run_audit`), LLM calls, retry logic, partial detection |

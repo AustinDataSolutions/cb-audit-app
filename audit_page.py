@@ -24,6 +24,7 @@ import audit_email
 import audit_worker
 from ads_auth.ui.gate import confirm_navigation, log, render_sidebar, require_login
 from core.config import load_settings
+from core.model_choice import UNLISTED, choose_default_model, default_model_caption
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,12 @@ def _fetch_openai_models(api_key):
 
 
 def _get_model_options(llm_provider, api_key, default_model):
+    """The sidebar's model list, whether it came from the provider, the error if not, and which model
+    to preselect. `default_model` is the configured name; the preselected one is chosen from the
+    provider's list by the rule in `core/model_choice.py` and falls back to the configured name when
+    the list is unavailable."""
     if not api_key:
-        return [default_model], False, "No API key found."
+        return [default_model], False, "No API key found.", choose_default_model(llm_provider, default_model, None)
 
     if llm_provider == "anthropic":
         models, err = _fetch_anthropic_models(api_key)
@@ -138,7 +143,7 @@ def _get_model_options(llm_provider, api_key, default_model):
 
     if err or not models:
         err_msg = str(err) if err else "No models returned from provider."
-        return [default_model], False, err_msg
+        return [default_model], False, err_msg, choose_default_model(llm_provider, default_model, None)
 
     unique_models = []
     seen = set()
@@ -147,10 +152,12 @@ def _get_model_options(llm_provider, api_key, default_model):
             seen.add(model)
             unique_models.append(model)
 
-    if default_model not in seen:
+    choice = choose_default_model(llm_provider, default_model, unique_models)
+    if choice.status == UNLISTED:
+        # Nothing comparable in the list: keep the configured name selectable, as before.
         unique_models.insert(0, default_model)
 
-    return unique_models, True, None
+    return unique_models, True, None, choice
 
 
 def _validate_api_key(llm_provider, api_key):
@@ -230,8 +237,8 @@ def log_usage(event: str) -> None:
 def _load_app_defaults(config_path):
     defaults = {
         "llm_provider": "anthropic",
-        "model_name_anthropic": "claude-opus-4-5",
-        "model_name_openai": "gpt-5-nano",
+        "model_name_anthropic": "claude-opus-5-5",
+        "model_name_openai": "gpt-6-luna",
         "max_categories": 1000,
         "max_sentences_per_category": 1001,
         "max_tokens": 10000,
@@ -1012,12 +1019,17 @@ def main():
             model_options = [default_model]
             models_enabled = False
             model_error = "Set valid API credentials."
+            model_choice = choose_default_model(llm_provider, default_model, None)
         else:
-            model_options, models_enabled, model_error = _get_model_options(llm_provider, key_for_models, default_model)
+            model_options, models_enabled, model_error, model_choice = _get_model_options(
+                llm_provider, key_for_models, default_model
+            )
     else:
-        model_options, models_enabled, model_error = _get_model_options(llm_provider, api_key, default_model)
+        model_options, models_enabled, model_error, model_choice = _get_model_options(
+            llm_provider, api_key, default_model
+        )
 
-    model_index = model_options.index(default_model) if default_model in model_options else 0
+    model_index = model_options.index(model_choice.model) if model_choice.model in model_options else 0
     model_name = sidebar.selectbox(
         "Model",
         options=model_options,
@@ -1026,6 +1038,10 @@ def main():
     )
     if (use_manual_api_key and not manual_key_valid) or not models_enabled:
         sidebar.warning(model_error or "Set valid API credentials")
+    else:
+        model_caption = default_model_caption(model_choice, llm_provider)
+        if model_caption:
+            sidebar.caption(model_caption)
 
     anthropic_api_key = None
     openai_api_key = None

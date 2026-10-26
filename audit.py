@@ -29,8 +29,8 @@ except ImportError:  # Optional dependency
 
 DEFAULT_MAX_CATEGORIES = 1000
 DEFAULT_MAX_SENTENCES_PER_CATEGORY = 51
-DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-5"
-DEFAULT_OPENAI_MODEL = "gpt-5-nano"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 DEFAULT_MAX_TOKENS = 10000
 DEFAULT_LLM_TIMEOUT = 300  # seconds per API call
 # Save a checkpoint every Nth completed category instead of after every one.
@@ -679,6 +679,15 @@ _LLM_STATUS_DELAY = 20  # seconds before showing "still waiting" message
 # Lets httpx time out and tear down cleanly on its own first; the watchdog only
 # fires when httpx fails to (e.g. a stalled streaming response that never gaps).
 _LLM_WATCHDOG_GRACE = 30  # seconds
+
+
+def _anthropic_response_text(message):
+    """The answer in a non-streaming Anthropic response. Models that think put a thinking block
+    before the text, so the first text block is the answer, not `content[0]`."""
+    for block in getattr(message, "content", None) or []:
+        if getattr(block, "type", "text") == "text" and hasattr(block, "text"):
+            return block.text
+    raise ValueError("The model returned no text.")
 
 
 def _call_llm_with_status(call_fn, timeout_seconds, status_fn):
@@ -1360,7 +1369,7 @@ def run_audit_from_config():
                 ],
                 timeout=httpx.Timeout(DEFAULT_LLM_TIMEOUT, connect=30.0),
             )
-            response_text = message.content[0].text
+            response_text = _anthropic_response_text(message)
         else:
             response = client.chat.completions.create(
                 model=model_name or DEFAULT_OPENAI_MODEL,
