@@ -98,6 +98,7 @@ def test_sign_in_shows_the_audit_screen_with_the_account_sidebar(data, monkeypat
     assert [t.value for t in at.title] == [TITLE]
     assert len(at.get("file_uploader")) == 2                       # audit workbook and model tree
     assert "Signed in as **alice**" in [m.value for m in at.sidebar.markdown]
+    assert "**Other tools from ADS:**" in [m.value for m in at.sidebar.markdown]   # shared links after the account block
     assert any(b.key == "logout_button" for b in at.button)
     assert len(at.get("page_link")) >= 1                          # sidebar About link
     assert [s.label for s in at.sidebar.selectbox] == ["Provider", "Model"]
@@ -159,6 +160,7 @@ def test_wrong_password_is_refused_and_recorded_without_revealing_the_app(data):
 def test_about_page_is_readable_without_signing_in(data):
     at = _page(_router(), "about")
     assert at.markdown[0].value.startswith("# How this app handles your data")
+    assert "**Other tools from ADS:**" in [m.value for m in at.sidebar.markdown]
     assert not at.get("file_uploader")
     assert _events(data) == []
 
@@ -173,6 +175,7 @@ def test_usage_statistics_is_for_managers_only(data):
     assert [t.value for t in at.title] == ["Usage statistics"]
     assert not at.error
     assert len(at.dataframe) == 3
+    assert "**Other tools from ADS:**" in [m.value for m in at.sidebar.markdown]
     assert "**Run audit**" in at.caption[0].value and "**Email results**" in at.caption[0].value
     columns = list(at.dataframe[2].value.columns)
     assert columns == ["User", "Logins", "Upload audit files", "Upload model trees", "Run audits", "Email results", "Downloads"]

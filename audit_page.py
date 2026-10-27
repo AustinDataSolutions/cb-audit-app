@@ -22,6 +22,7 @@ from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTE
 from audit_email import is_valid_email
 import audit_email
 import audit_worker
+from ads_auth.ui.ads_apps import render_other_ads_tools
 from ads_auth.ui.gate import confirm_navigation, log, render_sidebar, require_login
 from core.config import load_settings
 from core.model_choice import UNLISTED, choose_default_model, default_model_caption
@@ -1081,6 +1082,7 @@ def main():
         value=int(app_defaults["max_tokens"]),
         step=100,
     )
+    render_other_ads_tools(st)   # the shared ADS links close the sidebar, after this app's own settings
 
     missing_reasons = []
     if not uploaded_audit:
