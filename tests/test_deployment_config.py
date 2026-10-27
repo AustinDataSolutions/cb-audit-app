@@ -88,7 +88,7 @@ def test_python_pin_and_requirements():
     assert (ROOT / ".python-version").read_text().strip() == "3.12.3"
     reqs = (ROOT / "requirements.txt").read_text()
     assert "streamlit==1.52.2" in reqs
-    assert "ads-auth @ git+https://github.com/AustinDataSolutions/ads-auth.git@v1.1.3" in reqs
+    assert "ads-auth @ git+https://github.com/AustinDataSolutions/ads-auth.git@v1.2.0" in reqs
     for pkg in ("anthropic==", "openai==", "python-dotenv==", "pandas==", "openpyxl=="):
         assert pkg in reqs
 

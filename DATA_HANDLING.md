@@ -1,6 +1,6 @@
 # How this app handles your data
 
-Last updated 19 October 2026. This describes the hosted AARP Automatic Audit
+Last updated 27 October 2026. This describes the hosted AARP Automatic Audit
 on Render at aarp-automatic-audit.onrender.com. Each person now signs in with
 their own account, the same username and password used for the Model Rules
 Explorer and the Themes Explorer; the shared password used until October 2026
@@ -96,9 +96,17 @@ administrator resets your password.
 
 The app uses no third-party services other than the hosting service, Render,
 the model provider you choose, and the email service used to send results. It
-uses no analytics (Streamlit's usage statistics are switched off) and no
-cookies beyond the ones Streamlit needs to keep your browser connected to your
-session.
+uses no analytics (Streamlit's usage statistics are switched off). Beyond the
+cookies Streamlit needs to keep your browser connected to your session, it
+sets one cookie of its own, described next.
+
+When you sign in, the app places one cookie in your browser so that reloading
+the page or opening the app in a new tab within the next eight hours does not
+sign you out. The cookie holds your account's internal number, a version
+number that changes whenever your password is reset or changed, the time you
+signed in, and a signature that lets the app check those values. It holds no
+password and no name. It expires eight hours after you signed in, is removed
+when you sign out, and is sent only to this app.
 
 The server runs on one server in Render's Virginia (US) region. The accounts
 and usage database lives on a small disk attached to that server. Render keeps

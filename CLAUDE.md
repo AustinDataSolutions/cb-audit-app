@@ -45,6 +45,8 @@ when a family is renamed or retired.
   in the package and bump the pin; do not re-implement it here. Bumping the pin
   to a release whose CHANGELOG entry is marked "Disclosure: affected" requires a
   `DATA_HANDLING.md` update in the same commit.
+  The package's stay-signed-in cookie is on whenever a cookie secret is present
+  (`ADS_AUTH_COOKIE_SECRET`, else `STREAMLIT_SERVER_COOKIE_SECRET`, which Render sets).
 - **Disclosure stays current.** Any change that stores, logs, transmits, or
   retains data differently (new table, new file on disk, new third-party call,
   new prompt content, new retention window, new cookie, new usage event name)
@@ -167,7 +169,8 @@ LLM calls have a 300s timeout (`DEFAULT_LLM_TIMEOUT`). Retryable errors (429,
   above the final download button. Session state survives a visit to the About
   or Usage statistics page (widget state does not), so the line is still there
   on return; a new upload clears it with the output.
-- `auth_*`: the package's session keys (user id, session version, sign-in time);
+- `auth_*`: the package's session keys (user id, session version, sign-in time;
+  `auth_cookie_action` and `auth_cookie_blocked` drive the stay-signed-in cookie);
   sign-out clears the whole session state, uploads and results included.
 - `auth_pending_page`: the package's record of a sidebar page link clicked while
   the screen had inputs to lose (see "Leaving the audit screen").

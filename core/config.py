@@ -13,7 +13,9 @@ Variables: `DATA_DIR` (where the accounts and usage database lives; default `.da
 git-ignored; `/var/data` on Render), `AUTH_MODE` (`required`, the default, or `disabled` for local
 development only), `USAGE_EXCLUDE_USERS` (comma-separated accounts left out of the Usage statistics page
 by default; default `ads-dev`), `ORGANIZATION`, `AUDIENCE`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`.
+`SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, and
+`ADS_AUTH_COOKIE_SECRET` (optional; falls back to `STREAMLIT_SERVER_COOKIE_SECRET`, which Render sets, and signs
+the stay-signed-in cookie whenever one is present).
 """
 from __future__ import annotations
 
@@ -21,7 +23,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ads_auth import AUTH_MODES, AppSettings, auth_mode_from_environ, exclude_users_from_environ
+from ads_auth import (AUTH_MODES, AppSettings, auth_mode_from_environ, cookie_secret_from_environ,
+                      exclude_users_from_environ)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_SLUG = "automatic-audit"          # `app` column in the shared event export; CSV download prefix
@@ -131,6 +134,7 @@ def load_settings(environ=None, *, dotenv_path: str | os.PathLike | None = ".env
         data_dir=data_dir,
         is_render=is_render,
         auth_mode=auth_mode_from_environ(environ),
+        cookie_secret=cookie_secret_from_environ(environ),
         usage_exclude_users=exclude_users_from_environ(environ, default="ads-dev"),
         organization=organization,
         audience=_text(environ, "AUDIENCE", DEFAULT_AUDIENCE),

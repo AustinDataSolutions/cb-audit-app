@@ -11,5 +11,5 @@ certifi>=2026.10.19
 # Shared accounts, sessions, usage events, About and Usage statistics pages (public repository), pinned
 # to a release tag. Bump deliberately: a release marked "Disclosure: affected" in the package CHANGELOG
 # needs a DATA_HANDLING.md update in the same commit.
-ads-auth @ git+https://github.com/AustinDataSolutions/ads-auth.git@v1.1.3
+ads-auth @ git+https://github.com/AustinDataSolutions/ads-auth.git@v1.2.0
 xlsxwriter==3.2.9
