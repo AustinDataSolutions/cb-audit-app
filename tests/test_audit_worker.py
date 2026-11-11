@@ -207,6 +207,7 @@ def test_stop_promotes_checkpoint(worker_module):
     assert snap.output_filename == "out_checkpoint.xlsx"
     assert snap.is_partial is True
     assert snap.checkpoint_topic == 1
+    assert snap.checkpoint_bytes is None  # one copy: it is the output now
     assert reg.active() is None
 
 
@@ -432,3 +433,29 @@ def test_forget_drops_a_finished_job_but_never_a_running_one(worker_module):
     assert reg.active() is None
     assert reg.forget(job.run_id) is False
     assert reg.forget(None) is False
+
+
+def test_a_finished_job_keeps_only_its_output(worker_module):
+    from dataclasses import replace
+    w = worker_module
+    reg = w.JobRegistry()
+    seen = []
+
+    def fake_run(*, progress_fn, save_progress_fn, **kw):
+        seen.append(kw.get("audit_input"))
+        progress_fn(1, 2, "A")
+        save_progress_fn(b"CKPT1")
+        progress_fn(2, 2, "B")
+        save_progress_fn(b"CKPT2")  # replaces the first; one checkpoint at a time
+        return b"FINAL"
+
+    job = reg.start(replace(_make_params(w), audit_kwargs={"audit_input": b"BIG"}), run_fn=fake_run)
+    _join(job)
+    assert seen == [b"BIG"]
+    snap = job.snapshot()
+    assert snap.status == w.JobStatus.DONE
+    assert snap.output_bytes == b"FINAL"
+    assert snap.checkpoint_bytes is None  # superseded by the output
+    assert snap.checkpoint_topic == 2
+    assert job.params.audit_kwargs == {}  # the parsed input went with the run
+    assert job.params.completed_filename == "out_completed.xlsx"

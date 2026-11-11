@@ -143,9 +143,10 @@ run re-attaches to the live job via `registry.active()`.
   `JobParams.email` and sent from the worker, so it lands even with no browser.
   `JobParams.on_email_sent` (the UI passes a usage-event logger) runs on the
   worker after a successful send and never changes the outcome.
-- **A job's lifetime is bounded.** A job carries the run's input (the parsed
-  workbook in `audit_kwargs`), its output, and its last checkpoint, which is
-  tens of MB. The registry drops it when the owning session copies the result
+- **A job's lifetime is bounded.** While running, a job carries the run's
+  input (the parsed workbook in `audit_kwargs`), one checkpoint (each replaces
+  the last), and its output, which is tens of MB. On finishing it keeps only
+  the output (`_finish`). The registry drops it when the owning session copies the result
   into session state (`registry.forget`, from `_finalize_job_into_session`)
   and prunes any finished leftovers when the next run starts. Anything added
   to a process-global container must have a removal path like this; the

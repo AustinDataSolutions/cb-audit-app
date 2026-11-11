@@ -28,7 +28,7 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
 
 from audit import run_audit, AuditStopRequested, _is_retryable_llm_error
@@ -227,10 +227,18 @@ class AuditJob:
             self.output_filename = filename
             self.is_partial = is_partial
 
+    def _finish(self, status: JobStatus):
+        """Under the lock: mark the terminal status and keep only the result. The checkpoint has
+        either been superseded by the output (done) or become it (stopped, error), and the run's
+        input is of no use now, so neither is held while the job waits to be collected."""
+        self.status = status
+        self.finished_at = time.time()
+        self.checkpoint_bytes = None
+        self.params = replace(self.params, audit_kwargs={}, summary_only_input=None)
+
     def set_done(self):
         with self._lock:
-            self.status = JobStatus.DONE
-            self.finished_at = time.time()
+            self._finish(JobStatus.DONE)
 
     def set_stopped(self):
         """Promote the latest checkpoint to the (partial) output and mark stopped."""
@@ -239,8 +247,7 @@ class AuditJob:
                 self.output_bytes = self.checkpoint_bytes
                 self.output_filename = self.params.checkpoint_filename
                 self.is_partial = True
-            self.status = JobStatus.STOPPED
-            self.finished_at = time.time()
+            self._finish(JobStatus.STOPPED)
 
     def set_error(self, exc: BaseException):
         with self._lock:
@@ -252,8 +259,7 @@ class AuditJob:
                 self.output_bytes = self.checkpoint_bytes
                 self.output_filename = self.params.checkpoint_filename
                 self.is_partial = True
-            self.status = JobStatus.ERROR
-            self.finished_at = time.time()
+            self._finish(JobStatus.ERROR)
 
     def set_summary_error(self, exc: BaseException):
         """Record a failed summary phase without failing the whole run.
