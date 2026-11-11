@@ -200,6 +200,16 @@ people can be signed in at once, so "who owns the running audit" matters:
   sets `active_run_id`. That token survives a websocket reconnect **within the
   same browser tab**, so only the owner's tab re-attaches to the live run (full
   progress panel + Stop + checkpoint download).
+- The router calls the package's `keep_sessions_on_reconnect()` once per
+  process. A tab whose connection dropped before the server noticed rejoins
+  its own session, so `active_run_id` (and the upload and edited prompts) are
+  still there and the URL token is not needed. Once the server has seen the
+  connection close, Streamlit holds the session for
+  `server.disconnectedSessionTTL` (the default two minutes; not set in
+  `.streamlit/config.toml`) and the hook releases its files when that ends.
+  After that the tab gets a fresh session and the `?run=` token is what
+  re-attaches it to the run. `DATA_HANDLING.md` states the hold; change both
+  together.
 - A different session (another account, or the owner after losing the tab/URL)
   does **not** carry the token, so it can't adopt the run. A full-page gate near
   the top of `main()` renders only the title + a read-only "an audit is already

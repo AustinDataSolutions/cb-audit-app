@@ -165,6 +165,16 @@ def test_about_page_is_readable_without_signing_in(data):
     assert _events(data) == []
 
 
+def test_the_router_lets_a_reconnecting_tab_rejoin_its_session(data, monkeypatch):
+    from streamlit.runtime.websocket_session_manager import WebsocketSessionManager
+    from ads_auth.ui import reconnect
+
+    # Restored after the test, so other tests see Streamlit's own method.
+    monkeypatch.setattr(WebsocketSessionManager, "connect_session", WebsocketSessionManager.connect_session)
+    _router()
+    assert getattr(WebsocketSessionManager.connect_session, reconnect._MARK, False)
+
+
 def test_usage_statistics_is_for_managers_only(data):
     at = _page(_sign_in(_router(), "alice"), "reports")
     assert [t.value for t in at.title] == ["Usage statistics"]

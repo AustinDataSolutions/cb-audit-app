@@ -15,6 +15,7 @@ from ads_auth.ui import about as about_ui
 from ads_auth.ui.ads_apps import render_other_ads_tools
 from ads_auth.ui import reports as reports_ui
 from ads_auth.ui.gate import require_login
+from ads_auth.ui.reconnect import keep_sessions_on_reconnect
 from core.config import APP_TITLE, load_settings
 
 settings = load_settings()
@@ -46,6 +47,9 @@ def reports_page() -> None:
 
 def run() -> None:
     st.set_page_config(page_title=APP_TITLE, initial_sidebar_state="collapsed")
+    # A tab that reconnects after a dropped connection keeps its session (upload, prompts, run handle)
+    # instead of starting an empty one; sessions whose hold ended release their files.
+    keep_sessions_on_reconnect()
     _prepare_storage(str(settings.data_dir), str(settings.db_path))
     settings.pages["app"] = st.Page("audit_page.py", title=APP_TITLE, url_path="app", default=True)
     settings.pages["about"] = st.Page(about_page, title=ABOUT_TITLE, url_path="about")
