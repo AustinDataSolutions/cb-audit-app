@@ -14,3 +14,8 @@ maxMessageSize = 50
 # many seconds (default 30). A busy single-CPU instance can miss that window during a long run and sign
 # the user out mid-audit (seen on a sibling app, 2026-10-19). Two minutes of tolerance.
 websocketPingInterval = 120
+# How long a session whose browser connection closed is held so the page can rejoin it (Streamlit's
+# default is two minutes). An hour covers a laptop that slept mid-session; the upload and prompts
+# are a few MB, and ads_auth releases the session's files when the hour ends. DATA_HANDLING.md
+# states this window; change both together.
+disconnectedSessionTTL = 3600

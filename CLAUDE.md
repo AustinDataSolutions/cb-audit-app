@@ -213,8 +213,9 @@ people can be signed in at once, so "who owns the running audit" matters:
   its own session, so `active_run_id` (and the upload and edited prompts) are
   still there and the URL token is not needed. Once the server has seen the
   connection close, Streamlit holds the session for
-  `server.disconnectedSessionTTL` (the default two minutes; not set in
-  `.streamlit/config.toml`) and the hook releases its files when that ends.
+  `server.disconnectedSessionTTL` (an hour, set in `.streamlit/config.toml`;
+  Streamlit's default is two minutes) and the hook releases its files when
+  that ends.
   After that the tab gets a fresh session and the `?run=` token is what
   re-attaches it to the run. `DATA_HANDLING.md` states the hold; change both
   together.
