@@ -220,10 +220,11 @@ def test_usage_statistics_is_for_managers_only(data):
     at = _page(_sign_in(_router(), "maria"), "reports")
     assert [t.value for t in at.title] == ["Usage statistics"]
     assert not at.error
-    assert len(at.dataframe) == 4  # weekly, daily, and monthly active users, then per-user totals
+    assert len(at.dataframe) == 4  # per-user totals, then daily, weekly, and monthly active users
     assert "**Other tools from ADS:**" in [m.value for m in at.sidebar.markdown]
-    assert "**Run audit**" in at.caption[0].value and "**Email results**" in at.caption[0].value
-    columns = list(at.dataframe[-1].value.columns)
+    definitions = next(c.value for c in at.caption if "**Run audit**" in c.value)   # after the open-pages caption
+    assert "**Email results**" in definitions
+    columns = list(at.dataframe[0].value.columns)
     assert columns == ["User", "Logins", "Upload audit files", "Upload model trees", "Run audits", "Email results", "Downloads"]
 
 
