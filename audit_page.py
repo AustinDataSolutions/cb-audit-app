@@ -1543,6 +1543,8 @@ def main():
             st.session_state["audit_last_run"] = _last_run_record(snap)
             st.session_state["finalized_run_id"] = job.run_id
         st.session_state.pop("active_run_id", None)
+        # The session now holds the result; let the worker's copy of it, and the run's input, go.
+        registry.forget(job.run_id)
         if "run" in st.query_params:
             del st.query_params["run"]
 

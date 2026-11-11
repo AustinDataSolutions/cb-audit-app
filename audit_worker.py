@@ -487,6 +487,10 @@ class JobRegistry:
                     raise AlreadyRunning("An audit is already running.")
             run_id = uuid.uuid4().hex
             job = AuditJob(run_id, params)
+            # Earlier runs are of no further use once the slot is free: their session copied the
+            # result (forget) or was emailed it. Dropping them frees their input, output, and
+            # checkpoint; nothing else in the process keeps a job alive.
+            self._jobs = {rid: j for rid, j in self._jobs.items() if not j.is_terminal()}
             self._jobs[run_id] = job
             self._active_id = run_id
 
@@ -500,6 +504,20 @@ class JobRegistry:
         thread.start()
         logger.info("Started audit job %s", run_id)
         return job
+
+    def forget(self, run_id: Optional[str]) -> bool:
+        """Drop a finished job so its input, output, and checkpoint can be freed. The UI calls this
+        once it has copied the result into its own session. A job still running is left alone."""
+        if not run_id:
+            return False
+        with self._lock:
+            job = self._jobs.get(run_id)
+            if job is None or not job.is_terminal():
+                return False
+            del self._jobs[run_id]
+            if self._active_id == run_id:
+                self._active_id = None
+            return True
 
     def release(self, run_id: str):
         """Clear the active slot once a job reaches a terminal state."""

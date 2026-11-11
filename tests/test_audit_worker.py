@@ -396,3 +396,39 @@ def test_a_failing_on_email_sent_never_changes_the_outcome(worker_module, monkey
     _join(job)
     snap = job.snapshot()
     assert snap.status == w.JobStatus.DONE and snap.email_status == "sent:a@b.com"
+
+
+def test_the_previous_job_is_dropped_when_the_next_one_starts(worker_module):
+    w = worker_module
+    reg = w.JobRegistry()
+    job1 = reg.start(_make_params(w), run_fn=lambda **kw: b"FINAL1")
+    _join(job1)
+    assert reg.get(job1.run_id) is job1  # kept until its session collects it or a run supersedes it
+    job2 = reg.start(_make_params(w), run_fn=lambda **kw: b"FINAL2")
+    _join(job2)
+    assert reg.get(job1.run_id) is None
+    assert reg.get(job2.run_id) is job2
+
+
+def test_forget_drops_a_finished_job_but_never_a_running_one(worker_module):
+    w = worker_module
+    reg = w.JobRegistry()
+    started = threading.Event()
+    release = threading.Event()
+
+    def gated_run(**kw):
+        started.set()
+        release.wait(timeout=5)
+        return b"FINAL"
+
+    job = reg.start(_make_params(w), run_fn=gated_run)
+    assert started.wait(timeout=5)
+    assert reg.forget(job.run_id) is False
+    assert reg.get(job.run_id) is job
+    release.set()
+    _join(job)
+    assert reg.forget(job.run_id) is True
+    assert reg.get(job.run_id) is None
+    assert reg.active() is None
+    assert reg.forget(job.run_id) is False
+    assert reg.forget(None) is False

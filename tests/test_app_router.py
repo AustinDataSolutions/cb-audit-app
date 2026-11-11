@@ -441,6 +441,9 @@ def _run_audit(app):
     if "active_run_id" in app.session_state:
         app.run()
         assert not app.exception, app.exception
+    # The result now lives in the session; the worker holds nothing from the run any more.
+    import audit_worker
+    assert audit_worker.get_registry().get(app.session_state["finalized_run_id"]) is None
     return app
 
 
