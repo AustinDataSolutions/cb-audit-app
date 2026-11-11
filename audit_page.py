@@ -4,6 +4,7 @@ Registered by `app.py` (the router) as the default page beside the shared About 
 pages. Sign-in, the account sidebar, and usage events come from the `ads_auth` package; this script
 records the five actions this app declares in `core/config.py` at the place each one happens.
 """
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -17,7 +18,7 @@ from streamlit_tree_select import tree_select
 import yaml
 import time
 from audit_reformat import handle_audit_reformat
-from audit_validation import validate_audit_sentences_sheet
+from audit_validation import open_workbook, validate_audit_sentences_sheet
 from audit import detect_partial_audit, _is_retryable_llm_error, CHECKPOINT_INTERVAL, _extract_model_root_info
 from audit_email import is_valid_email
 import audit_email
@@ -267,13 +268,25 @@ def _topic_key(value):
     return normalized.casefold()
 
 
+def _audit_stats(audit_bytes):
+    """`_get_audit_stats`, computed once per distinct workbook in this session. The script reruns on
+    every widget change and two places need the counts each time; before this cache each rerun
+    parsed the workbook four times."""
+    digest = hashlib.blake2b(audit_bytes, digest_size=16).hexdigest()
+    cached = st.session_state.get("audit_stats_cache")
+    if cached and cached[0] == digest:
+        return cached[1]
+    stats = _get_audit_stats(audit_bytes)
+    st.session_state["audit_stats_cache"] = (digest, stats)
+    return stats
+
+
 def _get_audit_stats(audit_bytes):
-    sentences_sheet, header_row_idx, _, _, is_output_format = validate_audit_sentences_sheet(audit_bytes)
-    df = pd.read_excel(
-        BytesIO(audit_bytes),
-        sheet_name=sentences_sheet,
-        header=header_row_idx,
-    )
+    """Sentence counts per category, for the run-size checks and the model-tree alignment check. One
+    parse of the workbook."""
+    workbook = open_workbook(audit_bytes)
+    sentences_sheet, header_row_idx, _, _, is_output_format = validate_audit_sentences_sheet(workbook)
+    df = pd.read_excel(workbook, sheet_name=sentences_sheet, header=header_row_idx)
     if df.empty or len(df.columns) < 3:
         return {
             "category_counts": {},
@@ -735,6 +748,7 @@ def main():
             st.session_state.pop("audit_is_partial", None)
             st.session_state.pop("audit_last_run", None)
             st.session_state.pop("partial_audit_detection", None)
+            st.session_state.pop("audit_stats_cache", None)
             st.session_state["warnings_acknowledged"] = False
             st.session_state["warnings_confirmation_needed"] = False
 
@@ -841,7 +855,7 @@ def main():
                     audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
                     if not audit_bytes_for_stats:
                         audit_bytes_for_stats = uploaded_audit.getvalue()
-                    stats = _get_audit_stats(audit_bytes_for_stats)
+                    stats = _audit_stats(audit_bytes_for_stats)
                     tree_nodes = model_data.get("tree_nodes", [])
                     model_top_levels = {
                         _topic_key(node.get("label", ""))
@@ -1133,7 +1147,7 @@ def main():
             audit_bytes_for_stats = st.session_state.get("reformatted_audit_bytes")
             if not audit_bytes_for_stats:
                 audit_bytes_for_stats = uploaded_audit.getvalue()
-            stats = _get_audit_stats(audit_bytes_for_stats)
+            stats = _audit_stats(audit_bytes_for_stats)
             category_counts = stats["category_counts"]
             category_names = list(category_counts.keys())
             selected_topics = st.session_state.get("topics_to_audit")

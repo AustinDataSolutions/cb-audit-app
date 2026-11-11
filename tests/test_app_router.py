@@ -184,6 +184,33 @@ def test_sign_in_and_sign_out_write_usage_lines_to_the_server_log(data, caplog):
     assert lines == ["usage event: login by alice", "usage event: logout by alice"]
 
 
+def _count_workbook_reads(monkeypatch):
+    """Every parse of an .xlsx, whether through pandas or openpyxl directly, goes through
+    openpyxl.load_workbook; pandas imports it at call time, so patching the module attribute counts both."""
+    import openpyxl
+    real = openpyxl.load_workbook
+    reads = []
+    monkeypatch.setattr(openpyxl, "load_workbook", lambda *a, **k: reads.append(1) or real(*a, **k))
+    return reads
+
+
+def test_an_upload_parses_the_workbook_twice_and_reruns_not_at_all(data, monkeypatch):
+    reads = _count_workbook_reads(monkeypatch)
+    at = _audit_screen(monkeypatch, audit=_Upload(AUDIT_XLSX, "dining_audit.xlsx"),
+                       model_tree=_Upload(MODEL_XML, "dining_model.xml"))
+    assert len(reads) == 2, len(reads)   # checkpoint detection, then the category counts (cached per upload)
+    at.run()
+    at.run()
+    assert len(reads) == 2, len(reads)   # a rerun on any widget change reads nothing
+
+
+def test_open_workbook_passes_an_open_workbook_through(data):
+    from audit_validation import open_workbook, validate_audit_sentences_sheet
+    workbook = open_workbook(AUDIT_XLSX)
+    assert open_workbook(workbook) is workbook
+    assert validate_audit_sentences_sheet(workbook) == validate_audit_sentences_sheet(AUDIT_XLSX)
+
+
 def test_usage_statistics_is_for_managers_only(data):
     at = _page(_sign_in(_router(), "alice"), "reports")
     assert [t.value for t in at.title] == ["Usage statistics"]

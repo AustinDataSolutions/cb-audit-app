@@ -19,7 +19,7 @@ import yaml
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import numbers, Font, Alignment
 from openpyxl.utils import get_column_letter
-from audit_validation import validate_audit_sentences_sheet
+from audit_validation import open_workbook, validate_audit_sentences_sheet
 
 try:
     from openai import OpenAI
@@ -453,7 +453,7 @@ def detect_partial_audit(audit_bytes):
     }
 
     try:
-        excel_file = pd.ExcelFile(BytesIO(audit_bytes))
+        excel_file = open_workbook(audit_bytes)
         sheet_names_lower = [name.casefold() for name in excel_file.sheet_names]
 
         # Check if this looks like our output format (has Findings and Sentences sheets)
@@ -809,14 +809,11 @@ def run_audit(
     if warn_fn is None:
         warn_fn = log_fn
 
-    sentences_sheet, header_row_idx, _, warnings, is_output_format = validate_audit_sentences_sheet(audit_excel_bytes)
+    workbook = open_workbook(audit_excel_bytes)
+    sentences_sheet, header_row_idx, _, warnings, is_output_format = validate_audit_sentences_sheet(workbook)
     if warnings:
         warn_fn("Input audit file warnings:\n" + "\n".join(warnings))
-    df = pd.read_excel(
-        BytesIO(audit_excel_bytes),
-        sheet_name=sentences_sheet,
-        header=header_row_idx,
-    )
+    df = pd.read_excel(workbook, sheet_name=sentences_sheet, header=header_row_idx)
     category_sentences = _build_category_sentences(df, is_output_format)
 
     category_descriptions = _extract_category_descriptions(model_tree_bytes)

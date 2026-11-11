@@ -124,7 +124,7 @@ a fake provider client, an instant fake run, and a fake mailer.
 | `audit_worker.py` | Background execution: `JobRegistry` (process-global), `AuditJob`, `_run_pipeline` (audit→summary→email) |
 | `audit.py` | Core audit engine (`run_audit`), LLM calls, retry logic, partial detection |
 | `audit-report-summarizer.py` | Post-audit summary generation for low-accuracy topics |
-| `audit_validation.py` | Input file format detection and header validation |
+| `audit_validation.py` | Input file format detection and header validation. `open_workbook` parses an .xlsx once into a `pd.ExcelFile`; every reader accepts bytes or that object, so a workbook is parsed once per upload and once per run, not per caller |
 | `audit_reformat.py` | Pre-processing to normalize input files to standard format |
 | `audit-app.py` | Community Cloud "moved" notice; imports only Streamlit |
 
@@ -176,6 +176,9 @@ LLM calls have a 300s timeout (`DEFAULT_LLM_TIMEOUT`). Retryable errors (429,
 - `audit_output_bytes` / `audit_output_filename`: final or promoted partial
   output for download
 - `audit_is_partial`: whether the current output is incomplete
+- `audit_stats_cache`: `(digest, stats)` of the uploaded workbook's category
+  counts, so reruns (every widget change) don't re-parse it; cleared on a new
+  upload, and a different workbook (the reformatted bytes) misses by digest
 - `audit_last_run`: when the last run finished, how it ended, and the email
   outcome, written by `_finalize_job_into_session` and shown as a status line
   above the final download button. Session state survives a visit to the About

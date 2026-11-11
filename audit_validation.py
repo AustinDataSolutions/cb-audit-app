@@ -66,16 +66,26 @@ def _cell_is_merged_non_top_left(ws, row: int, col: int) -> bool:
     return False
 
 
-def validate_audit_sentences_sheet(file_bytes: bytes) -> Tuple[str, int, List[int], List[str], bool]:
+def open_workbook(file) -> pd.ExcelFile:
+    """The workbook as a pandas ExcelFile: parsed once, then read sheet by sheet. `file` is the
+    .xlsx bytes, or an ExcelFile already open, which is returned as is. Parsing is the expensive
+    part (openpyxl loads the whole file), so callers open once and pass the result along."""
+    if isinstance(file, pd.ExcelFile):
+        return file
+    return pd.ExcelFile(BytesIO(file))
+
+
+def validate_audit_sentences_sheet(file) -> Tuple[str, int, List[int], List[str], bool]:
     """
-    Validate audit sentences sheet and detect format.
+    Validate audit sentences sheet and detect format. `file` is the workbook bytes or an open
+    ExcelFile (see `open_workbook`).
 
     Returns (sheet_name, header_row_idx, header_indices, warnings, is_output_format).
 
     For input format: header_indices are [#_col, sentence_col, category_col]
     For output format: header_indices are [sentence_col, topic_col] (no ID column)
     """
-    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+    excel_file = open_workbook(file)
     sheet_names = excel_file.sheet_names
     sentences_sheet = None
     for name in sheet_names:
