@@ -25,6 +25,7 @@ import audit_worker
 from ads_auth.ui.ads_apps import render_other_ads_tools
 from ads_auth.ui.gate import confirm_navigation, log, render_sidebar, require_login
 from core.config import load_settings
+from core.logs import configure as configure_logging
 from core.model_choice import UNLISTED, choose_default_model, default_model_caption
 
 logger = logging.getLogger(__name__)
@@ -627,10 +628,7 @@ def get_api_key(provider="ANTHROPIC"):
     return settings.api_key(provider) or None
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    configure_logging()  # the router did this already; the smoke wrapper runs this script alone
 
     # st.cache_data.clear()
 
@@ -1269,13 +1267,16 @@ def main():
             # Off an approved domain — soft block: require an explicit second
             # click before this address counts as confirmed.
             st.session_state["email_override_address"] = addr
+            logger.info("Results email address off the approved domains; %s asked to confirm it again", user.username)
         else:
             st.session_state["email_confirmed_address"] = addr
+            logger.info("Results email address confirmed by %s", user.username)
 
     def _confirm_email_override():
         addr = (st.session_state.get("email_results_address") or "").strip()
         if addr:
             st.session_state["email_confirmed_address"] = addr
+            logger.info("Off-domain results email address confirmed by %s", user.username)
         st.session_state.pop("email_override_address", None)
 
     email_enabled = st.checkbox(
@@ -1372,7 +1373,7 @@ def main():
             st.session_state["active_run_id"] = job.run_id
             # Owner token in the URL so a reconnect of THIS tab can re-attach.
             st.query_params["run"] = job.run_id
-            logger.info("%s launched: provider=%s, model=%s", label, llm_provider, model_name)
+            logger.info("%s launched by %s: provider=%s, model=%s", label, user.username, llm_provider, model_name)
             st.session_state["audit_run_requested"] = False
             st.session_state.pop("finalized_run_id", None)
             st.rerun()

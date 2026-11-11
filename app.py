@@ -17,6 +17,7 @@ from ads_auth.ui import reports as reports_ui
 from ads_auth.ui.gate import require_login
 from ads_auth.ui.reconnect import keep_sessions_on_reconnect
 from core.config import APP_TITLE, load_settings
+from core.logs import configure as configure_logging
 
 settings = load_settings()
 
@@ -46,6 +47,7 @@ def reports_page() -> None:
 
 
 def run() -> None:
+    configure_logging()
     st.set_page_config(page_title=APP_TITLE, initial_sidebar_state="collapsed")
     # A tab that reconnects after a dropped connection keeps its session (upload, prompts, run handle)
     # instead of starting an empty one; sessions whose hold ended release their files.

@@ -64,7 +64,10 @@ when a family is renamed or retired.
 - Never commit `.env`, `.data/`, `*.db`, real audit exports, credentials, or
   password hashes. Test fixtures are synthetic.
 - Never log or print credentials, uploaded content, sentences, prompts, model
-  responses, email addresses, or usernames with content.
+  responses, email addresses, or usernames with content. A server-log line may
+  name the account (the disclosure says so): the package writes one per usage
+  event, and this app adds who launched a run and that an address was
+  confirmed.
 - `core/` imports no Streamlit and does no I/O at import time.
 - Run the full test suite before claiming a change works: `venv/bin/python -m pytest`.
 - Python 3.12.3 (`.python-version`), Streamlit pinned at 1.52.2 until a
@@ -115,6 +118,7 @@ a fake provider client, an instant fake run, and a fake mailer.
 | `app.py` | Router: `st.navigation` over the audit screen (file page) and the package's About and Usage statistics pages; prepares the database and the housekeeping thread once per process |
 | `audit_page.py` | Streamlit UI: sign-in gate and account sidebar (from `ads_auth`), launches/polls the background job, renders progress + downloads, logs usage events |
 | `core/config.py` | `Settings` (extends `ads_auth.AppSettings`): app name, title, events, provider keys, SMTP values, organization and audience, all from the environment |
+| `core/logs.py` | Server-log setup: line format, quiet `httpx` traffic, the silenced openpyxl default-style notice. Called by `app.py` and by `audit_page.main()` |
 | `core/model_choice.py` | The default-model rule: from the provider's model list, the newest model of the same family as the `config.yaml` name (Opus, Terra); the configured name is the fallback when the list is unavailable. Pure functions, tested with fake lists |
 | `manage.py`, `scripts/preflight.py` | Wrappers around `ads_auth.cli` and `ads_auth.preflight` with this app's settings |
 | `audit_worker.py` | Background execution: `JobRegistry` (process-global), `AuditJob`, `_run_pipeline` (audit→summary→email) |

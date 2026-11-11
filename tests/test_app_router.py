@@ -8,6 +8,7 @@ exercised at the place in the script that logs it (the package rejects undeclare
 runs check what the status line says after a finished run.
 """
 import io
+import logging
 import time
 import types
 from pathlib import Path
@@ -173,6 +174,14 @@ def test_the_router_lets_a_reconnecting_tab_rejoin_its_session(data, monkeypatch
     monkeypatch.setattr(WebsocketSessionManager, "connect_session", WebsocketSessionManager.connect_session)
     _router()
     assert getattr(WebsocketSessionManager.connect_session, reconnect._MARK, False)
+
+
+def test_sign_in_and_sign_out_write_usage_lines_to_the_server_log(data, caplog):
+    with caplog.at_level(logging.INFO, logger="ads_auth.usage.events"):
+        at = _sign_in(_router(), "alice")
+        next(b for b in at.button if b.key == "logout_button").click().run()
+    lines = [r.getMessage() for r in caplog.records if r.name == "ads_auth.usage.events"]
+    assert lines == ["usage event: login by alice", "usage event: logout by alice"]
 
 
 def test_usage_statistics_is_for_managers_only(data):
