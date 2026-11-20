@@ -16,6 +16,8 @@ the shared `ads-auth` package; `manage.py` runs them with this app's settings.
 | Reset a password | `python manage.py set-password <username>` (same temporary-password behaviour; also signs the person out everywhere and clears any lockout) |
 | Locked out | Wait 15 minutes, or `python manage.py unlock-user <username>` |
 | Promote or demote | `python manage.py set-role <username> user` (roles: user, manager, admin) |
+| Change a username | `python manage.py rename-user <username> <new-username>` (keeps the password, role, and display name; signs the person out everywhere; moves their usage history to the new name). Needs ads-auth 1.9.0 or later; this app pins v1.6.0, so bump `requirements.txt` first. |
+| Change a display name | `python manage.py set-name <username> "<Name>"` |
 | Deactivate / reactivate | `python manage.py deactivate-user <username>`, `python manage.py reactivate-user <username>` |
 | Delete permanently | `python manage.py delete-user <username> --force` (usage history keeps the name; cannot be undone) |
 | List accounts | `python manage.py list-users` |

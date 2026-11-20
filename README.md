@@ -131,3 +131,8 @@ venv/bin/python -m pytest -q
 - Model tree mismatch: upload the correct XML to align category names.
 - Locked out or forgotten password: an administrator runs
   `python manage.py set-password <username>` (see `docs/OPERATIONS.md`).
+- Someone's username has to change (a new email address, a typo): an
+  administrator runs `python manage.py rename-user <username> <new-username>`.
+  Their password and role stay; they are signed out and sign in with the new
+  name. Needs ads-auth 1.9.0 or later (this app pins v1.6.0); see
+  `docs/OPERATIONS.md`.
