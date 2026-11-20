@@ -91,7 +91,7 @@ and usage events live on the disk and survive deploys and restarts.
 |---|---|
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Provider keys. Rotate by changing the value and redeploying. |
 | `ORGANIZATION`, `AUDIENCE` | Named in the prompts and the page title. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` | Email delivery through Brevo: `smtp-relay.brevo.com`, port 587, the SMTP login and an SMTP key from Brevo's SMTP & API page, and a sender address verified in Brevo. Blank `SMTP_HOST` switches the feature off. See "Email delivery" below. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` | From the shared `ads-email` environment group. Email delivery through Brevo: `smtp-relay.brevo.com`, port 587, the SMTP login and an SMTP key from Brevo's SMTP & API page, and a sender address verified in Brevo. Blank `SMTP_HOST` switches the feature off. See "Email delivery" below. |
 | `DATA_DIR`, `AUTH_MODE` | `/var/data` and `required`; the Blueprint sets them. |
 | `USAGE_EXCLUDE_USERS` | Optional; accounts hidden from the statistics page by default. |
 
@@ -112,9 +112,16 @@ not a practical concern.
 - **Sender:** `no-reply@austindatasolutions.com` is the verified sender in
   Brevo and the `EMAIL_FROM` value. The two must match; Brevo refuses mail
   from any other address.
+- **Where the settings live:** the five values are in the Render environment
+  group `ads-email`, shared by the ADS services (this web service, the
+  keep-alive job below, Model Rules Finder, and any other app that sends
+  email). Neither service here sets them itself; a service's own value would
+  override the group's.
 - **Rotating the SMTP key:** generate a new SMTP key on Brevo's SMTP & API
-  page, name it after this app, set it as `SMTP_PASSWORD` on the web service
-  and on the keep-alive job (below), then delete the old key in Brevo. Brevo deactivates a key that has not sent
+  page, set it as `SMTP_PASSWORD` in the `ads-email` group, deploy each linked
+  service (deploys are manual, so a group change alone doesn't reach them;
+  Report Summarizer, if linked, redeploys by itself), then delete the old key
+  in Brevo. Brevo deactivates a key that has not sent
   anything for 90 days; if email stops working after a quiet period, check the
   key's status there and reactivate it.
 - **Automatic checks:** the app signs in to Brevo (without sending anything)

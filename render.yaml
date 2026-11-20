@@ -39,23 +39,15 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      # Email delivery of finished workbooks ("Email results to me"). Leave the host blank to switch the
-      # feature off; the app then says email is not configured.
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
+      # Email delivery of finished workbooks ("Email results to me"): SMTP_HOST, SMTP_PORT, SMTP_USER,
+      # SMTP_PASSWORD, EMAIL_FROM, from the environment group shared by the ADS services (made in the
+      # dashboard). Do not also set them on the service: a service's own value overrides the group's.
+      - fromGroup: ads-email
 
   # Once a month, send one fixed sentence to KEEPALIVE_TO through the same email settings, so the
   # provider's SMTP key is never idle for 90 days (Brevo deactivates idle keys). Billed by the second
-  # it runs, with Render's $1/month minimum. The job gets its own copy of the five email values;
-  # rotating the key means updating both services (docs/OPERATIONS.md, "Email delivery").
+  # it runs, with Render's $1/month minimum. It reads the five email values from the same group as the
+  # web service, so rotating the key is one change there (docs/OPERATIONS.md, "Email delivery").
   - type: cron
     name: aarp-automatic-audit-email-keepalive
     runtime: python
@@ -71,13 +63,4 @@ services:
         value: "1"
       - key: KEEPALIVE_TO
         sync: false            # the address the monthly check is sent to (the app's owner)
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
+      - fromGroup: ads-email

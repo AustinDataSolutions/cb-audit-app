@@ -20,6 +20,15 @@ def _service():
     return _services()["aarp-automatic-audit"]
 
 
+def _env(svc):
+    """The service's own variables by name; group links (`fromGroup`) have no name."""
+    return {e["key"]: e for e in svc["envVars"] if "key" in e}
+
+
+EMAIL_GROUP = {"fromGroup": "ads-email"}
+EMAIL_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM")
+
+
 def test_the_web_service_runs_the_router_through_preflight():
     assert list(_services()) == ["aarp-automatic-audit", "aarp-automatic-audit-email-keepalive"]
     svc = _service()
@@ -39,26 +48,26 @@ def test_the_web_service_runs_the_router_through_preflight():
 
 def test_disk_holds_the_accounts_database_and_matches_data_dir():
     svc = _service()
-    env = {e["key"]: e for e in svc["envVars"]}
+    env = _env(svc)
     assert svc["disk"] == {"name": "automatic-audit-data", "mountPath": "/var/data", "sizeGB": 1}
     assert env["DATA_DIR"] == {"key": "DATA_DIR", "value": "/var/data"}
     assert env["AUTH_MODE"] == {"key": "AUTH_MODE", "value": "required"}
     assert env["STREAMLIT_SERVER_COOKIE_SECRET"] == {"key": "STREAMLIT_SERVER_COOKIE_SECRET", "generateValue": True}
 
 
-def test_keys_and_mail_settings_are_dashboard_values_without_committed_secrets():
-    env = {e["key"]: e for e in _service()["envVars"]}
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM", "AUDIENCE"):
+def test_keys_are_dashboard_values_and_mail_settings_come_from_the_shared_group():
+    env = _env(_service())
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AUDIENCE"):
         assert env[key] == {"key": key, "sync": False}, key
     assert env["ORGANIZATION"] == {"key": "ORGANIZATION", "value": "AARP"}
-    assert env["SMTP_PORT"] == {"key": "SMTP_PORT", "value": "587"}
+    assert EMAIL_GROUP in _service()["envVars"] and not set(env) & set(EMAIL_KEYS)   # a service value would override the group
     assert "APP_PASSWORD" not in env                     # the shared password is gone
-    plain = {"DATA_DIR", "AUTH_MODE", "PYTHONUNBUFFERED", "ORGANIZATION", "SMTP_PORT"}
+    plain = {"DATA_DIR", "AUTH_MODE", "PYTHONUNBUFFERED", "ORGANIZATION"}
     for e in env.values():
         assert "value" not in e or e["key"] in plain, e["key"]
 
 
-def test_keepalive_cron_job_sends_monthly_through_its_own_copy_of_the_email_settings():
+def test_keepalive_cron_job_sends_monthly_through_the_shared_email_settings():
     job = _services()["aarp-automatic-audit-email-keepalive"]
     assert job["type"] == "cron" and job["runtime"] == "python"
     assert job["region"] == "virginia" and job["plan"] == "0.5c-512mb" and job["branch"] == "main"
@@ -67,11 +76,9 @@ def test_keepalive_cron_job_sends_monthly_through_its_own_copy_of_the_email_sett
     assert job["buildCommand"] == "./scripts/render-build.sh"
     assert job["startCommand"] == "python scripts/email_keepalive.py"
     assert "disk" not in job
-    env = {e["key"]: e for e in job["envVars"]}
-    for key in ("KEEPALIVE_TO", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"):
-        assert env[key] == {"key": key, "sync": False}, key
-    assert env["SMTP_PORT"] == {"key": "SMTP_PORT", "value": "587"}
-    assert set(env) == {"PYTHONUNBUFFERED", "KEEPALIVE_TO", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"}
+    env = _env(job)
+    assert env["KEEPALIVE_TO"] == {"key": "KEEPALIVE_TO", "sync": False}
+    assert set(env) == {"PYTHONUNBUFFERED", "KEEPALIVE_TO"} and EMAIL_GROUP in job["envVars"]
     assert os.access(ROOT / "scripts" / "email_keepalive.py", os.X_OK)
 
 
