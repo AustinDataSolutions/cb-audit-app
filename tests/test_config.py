@@ -139,3 +139,15 @@ def test_disclosure_lists_every_recorded_action_in_plain_words():
     for provider in ("Anthropic", "OpenAI"):
         assert provider in text
     assert "shared password" in text                 # tells former users it is gone
+
+
+def test_password_reset_mail_comes_from_the_same_email_settings_and_a_half_set_one_turns_it_off():
+    base = {"AUTH_MODE": "required", "SMTP_HOST": "smtp-relay.brevo.com", "SMTP_USER": "u",
+            "SMTP_PASSWORD": "p", "EMAIL_FROM": "no-reply@austindatasolutions.com",
+            "RENDER_EXTERNAL_URL": "https://aarp-automatic-audit.onrender.com"}
+    s = load_settings(base, dotenv_path=None)
+    assert s.mail.host == "smtp-relay.brevo.com" and s.public_url == "https://aarp-automatic-audit.onrender.com"
+    assert s.password_reset_enabled
+    half = load_settings({**base, "SMTP_PASSWORD": ""}, dotenv_path=None)
+    assert half.mail is None and not half.password_reset_enabled and half.smtp_host == "smtp-relay.brevo.com"
+    assert not load_settings({"AUTH_MODE": "required"}, dotenv_path=None).password_reset_enabled

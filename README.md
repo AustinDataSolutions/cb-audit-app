@@ -129,10 +129,12 @@ venv/bin/python -m pytest -q
 - Wrong file format: ensure the audit export is a valid `.xlsx` and includes a
   Sentences/Topics (or Findings) sheet layout expected by the app.
 - Model tree mismatch: upload the correct XML to align category names.
-- Locked out or forgotten password: an administrator runs
+- Forgotten password: "Forgot your password?" on the sign-in screen emails a
+  link to the account's email address (usernames that are addresses have one
+  automatically). Without an email, or when locked out, an administrator resets
+  it from **Manage users** in the sidebar or with
   `python manage.py set-password <username>` (see `docs/OPERATIONS.md`).
 - Someone's username has to change (a new email address, a typo): an
   administrator runs `python manage.py rename-user <username> <new-username>`.
   Their password and role stay; they are signed out and sign in with the new
-  name. Needs ads-auth 1.9.0 or later (this app pins v1.6.0); see
-  `docs/OPERATIONS.md`.
+  name; see `docs/OPERATIONS.md`.

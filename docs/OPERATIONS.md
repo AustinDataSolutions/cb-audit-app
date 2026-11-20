@@ -16,15 +16,29 @@ the shared `ads-auth` package; `manage.py` runs them with this app's settings.
 | Reset a password | `python manage.py set-password <username>` (same temporary-password behaviour; also signs the person out everywhere and clears any lockout) |
 | Locked out | Wait 15 minutes, or `python manage.py unlock-user <username>` |
 | Promote or demote | `python manage.py set-role <username> user` (roles: user, manager, admin) |
-| Change a username | `python manage.py rename-user <username> <new-username>` (keeps the password, role, and display name; signs the person out everywhere; moves their usage history to the new name). Needs ads-auth 1.9.0 or later; this app pins v1.6.0, so bump `requirements.txt` first. |
+| Change a username | `python manage.py rename-user <username> <new-username>` (keeps the password, role, and display name; signs the person out everywhere; moves their usage history, and an email that was the old username, to the new name) |
 | Change a display name | `python manage.py set-name <username> "<Name>"` |
+| Set or remove an email | `python manage.py set-email <username> <address>` (where "Forgot your password?" links go; leave out the address to remove it). Usernames that are addresses already have it. |
 | Deactivate / reactivate | `python manage.py deactivate-user <username>`, `python manage.py reactivate-user <username>` |
 | Delete permanently | `python manage.py delete-user <username> --force` (usage history keeps the name; cannot be undone) |
 | List accounts | `python manage.py list-users` |
 
+Administrators can also do most of this in the app: **Manage users** in the
+sidebar resets a password, adds an account, edits a name, email or role, and
+deletes, deactivates or reactivates an account. Each change goes in the admin
+log at the bottom of the Usage statistics page (administrators only). An
+administrator's own account isn't listed there; use the commands above.
+
 The last active administrator cannot be deactivated, demoted, or deleted.
 Five failed sign-ins within 15 minutes lock an account for 15 minutes. A
 session ends 8 hours after sign-in, at sign-out, or when the password is reset.
+
+**Forgot your password?** The sign-in screen offers it when the email settings
+are present (preflight prints `password_reset=on`). It emails a link that works
+once, for 30 minutes, to the account's email address; at most three per account
+per hour. Links use the service's own address (`RENDER_EXTERNAL_URL`); set
+`APP_URL` to use another. If an email doesn't arrive, check the address with
+`list-users`, then the Logs tab for `An email could not be sent`.
 
 The Usage statistics page leaves out the accounts in `USAGE_EXCLUDE_USERS`
 (default `ads-dev`) unless a manager changes the "Exclude accounts" box.

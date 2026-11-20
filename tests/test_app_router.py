@@ -306,7 +306,7 @@ def _leave_dialog(at):
 
 def test_with_nothing_to_lose_the_sidebar_links_navigate_at_once(data, monkeypatch):
     at = _audit_screen(monkeypatch)
-    assert _sidebar_nav(at) == (["About this app and data handling"], [])        # alice is not a manager
+    assert _sidebar_nav(at) == (["About this app"], [])        # alice is not a manager
     assert _leave_dialog(at) == ([], [])
     at = _page(at, "about")
     assert at.markdown[0].value.startswith("# How this app handles your data")
@@ -318,7 +318,7 @@ def test_an_edited_prompt_asks_before_leaving_and_go_back_keeps_it(data, monkeyp
     at.text_area(key=key).input("my own wording").run()
     assert not at.exception, at.exception
     assert _sidebar_nav(at) == ([], ["auth_nav_about"])
-    assert [b.label for b in at.sidebar.button if b.key == "auth_nav_about"] == ["About this app and data handling"]
+    assert [b.label for b in at.sidebar.button if b.key == "auth_nav_about"] == ["About this app"]
 
     at.button(key="auth_nav_about").click().run()
     assert not at.exception, at.exception
@@ -353,7 +353,7 @@ def test_a_manager_is_asked_before_either_page(data, monkeypatch):
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _FakeClient())
     _fake_uploads(monkeypatch)
     at = _sign_in(_router(), "maria")
-    assert _sidebar_nav(at) == (["Usage statistics", "About this app and data handling"], [])
+    assert _sidebar_nav(at) == (["Usage statistics", "About this app"], [])
     at.text_area(key="summary_prompt").input("my own wording").run()
     assert _sidebar_nav(at) == ([], ["auth_nav_reports", "auth_nav_about"])
     at.button(key="auth_nav_reports").click().run()

@@ -13,7 +13,9 @@ Variables: `DATA_DIR` (where the accounts and usage database lives; default `.da
 git-ignored; `/var/data` on Render), `AUTH_MODE` (`required`, the default, or `disabled` for local
 development only), `USAGE_EXCLUDE_USERS` (comma-separated accounts left out of the Usage statistics page
 by default; default `ads-dev`), `ORGANIZATION`, `AUDIENCE`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, and
+`SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` (from the shared `ads-email`
+environment group on Render; they also send the package's "Forgot your password?" links), `APP_URL` (the address in
+those links; Render's own `RENDER_EXTERNAL_URL` is used when it is unset), and
 `ADS_AUTH_COOKIE_SECRET` (optional; falls back to `STREAMLIT_SERVER_COOKIE_SECRET`, which Render sets, and signs
 the stay-signed-in cookie whenever one is present).
 """
@@ -24,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ads_auth import (AUTH_MODES, AppSettings, auth_mode_from_environ, cookie_secret_from_environ,
-                      exclude_users_from_environ)
+                      exclude_users_from_environ, mail_from_environ, public_url_from_environ)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_SLUG = "automatic-audit"          # `app` column in the shared event export; CSV download prefix
@@ -101,6 +103,16 @@ def _text(environ, name: str, default: str = "") -> str:
     return value.strip() if value and value.strip() else default
 
 
+def _reset_mail(environ):
+    """The package's mail settings for "Forgot your password?", or None. A half-set email configuration
+    turns that link off instead of stopping the app: the app's own checks (preflight, "Email results to
+    me", the keep-alive job) already report what is missing."""
+    try:
+        return mail_from_environ(environ)
+    except ValueError:
+        return None
+
+
 def load_settings(environ=None, *, dotenv_path: str | os.PathLike | None = ".env") -> Settings:
     """Build Settings from `environ` (defaults to os.environ).
 
@@ -145,4 +157,6 @@ def load_settings(environ=None, *, dotenv_path: str | os.PathLike | None = ".env
         smtp_user=_text(environ, "SMTP_USER"),
         smtp_password=_text(environ, "SMTP_PASSWORD"),
         email_from=_text(environ, "EMAIL_FROM"),
+        mail=_reset_mail(environ),
+        public_url=public_url_from_environ(environ),
     )

@@ -21,7 +21,7 @@ from core.logs import configure as configure_logging
 
 settings = load_settings()
 
-ABOUT_TITLE = "About this app and data handling"
+ABOUT_TITLE = "About this app"
 REPORTS_TITLE = "Usage statistics"
 
 
