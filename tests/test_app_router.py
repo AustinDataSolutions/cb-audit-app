@@ -225,7 +225,8 @@ def test_usage_statistics_is_for_managers_only(data):
     definitions = next(c.value for c in at.caption if "**Run audit**" in c.value)   # after the open-pages caption
     assert "**Email results**" in definitions
     columns = list(at.dataframe[0].value.columns)
-    assert columns == ["User", "Logins", "Upload audit files", "Upload model trees", "Run audits", "Email results", "Downloads"]
+    assert columns == ["User", "Logins", "Upload audit files", "Upload model trees", "Run audits", "Email results", "Downloads",
+                       "Last activity"]
 
 
 def test_logout_returns_to_the_sign_in_screen_and_clears_the_session(data, monkeypatch):

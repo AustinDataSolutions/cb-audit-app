@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from ads_auth import (AUTH_MODES, AppSettings, auth_mode_from_environ, cookie_secret_from_environ,
@@ -68,6 +69,9 @@ class Settings(AppSettings):
     title: str = APP_TITLE
     disclosure_path: Path = REPO_ROOT / "DATA_HANDLING.md"
     usage_exclude_users: tuple[str, ...] = ("ads-dev",)
+    # The Usage statistics page opens on this day until twelve months of history reach past it;
+    # after that it opens on the last twelve months. Usage recording started in October 2026.
+    usage_since: date = date(2026, 10, 1)
     events: tuple[str, ...] = USAGE_EVENTS
     definitions: str = USAGE_DEFINITIONS
     pages: dict[str, object] = field(default_factory=lambda: PAGES, compare=False, repr=False)
